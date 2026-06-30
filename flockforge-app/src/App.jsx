@@ -2,8 +2,9 @@ import React, { useState, useEffect, useRef, useMemo } from "react";
 import {
   Bird, Egg as EggIcon, Heart, CalendarDays, Stethoscope, GitBranch, BellRing,
   Feather, Plus, X, Pencil, Trash2, Camera, ChevronDown, ChevronLeft, ChevronRight,
-  Check, Loader2, Link2, Gauge, Wallet, Repeat, Search, Download, Upload, AlertTriangle, ShoppingBasket, StickyNote
+  Check, Loader2, Link2, Gauge, Wallet, Repeat, Search, Download, Upload, AlertTriangle, ShoppingBasket, StickyNote, LogOut, Mail, Lock
 } from "lucide-react";
+import { supabase } from "./supabaseClient.js";
 
 /* ----------------------------- constants ----------------------------- */
 
@@ -24,8 +25,10 @@ const EGG_COLORS = [
   { name: "White", hex: "#F5F1E6" },
   { name: "Brown", hex: "#A9764F" },
   { name: "Dark Brown", hex: "#6B4226" },
+  { name: "Tan", hex: "#D6B583" },
   { name: "Blue", hex: "#A9C4C4" },
-  { name: "Green / Olive", hex: "#9CA66B" },
+  { name: "Green", hex: "#7CA869" },
+  { name: "Olive", hex: "#8C8B4E" },
   { name: "Cream", hex: "#E8DCC0" },
   { name: "Pink", hex: "#E3C6BE" },
   { name: "Speckled", hex: "#C9A876" },
@@ -43,6 +46,7 @@ const SPECIES_PRESETS = [
 ];
 
 const MORTALITY_CAUSES = ["Predator", "Illness", "Injury", "Egg-bound", "Old age", "Unknown", "Cull", "Other"];
+const ORIGIN_PRESETS = ["Hatched in my incubator", "Hatched by a broody hen", "Purchased — feed store", "Purchased — breeder", "Purchased — online/mail order", "Gift or trade"];
 const HEALTH_TYPES = ["Vaccination", "Deworming", "Treatment", "Weight check", "Checkup", "Injury", "Other"];
 const REMOVAL_REASONS = ["Infertile", "Quitter / stopped developing", "Cracked", "Other"];
 
@@ -107,20 +111,36 @@ function resizeImage(file, maxDim = 480) {
 
 /* --------------------------- persistence hook --------------------------- */
 
-function usePersistedArray(key, onReady) {
-  const storageKey = `flockforge:${key}`;
-  const [data, setData] = useState(() => {
-    try {
-      const raw = localStorage.getItem(storageKey);
-      return raw ? JSON.parse(raw) : [];
-    } catch (e) {
-      return [];
-    }
-  });
-  useEffect(() => { onReady(); }, []);
+function usePersistedArray(key, userId, onReady, onSaveStateChange) {
+  const [data, setData] = useState([]);
+  const loadedRef = useRef(false);
+  const userIdRef = useRef(userId);
+
   useEffect(() => {
-    try { localStorage.setItem(storageKey, JSON.stringify(data)); } catch (e) {}
+    userIdRef.current = userId;
+    if (!userId) { loadedRef.current = false; return; }
+    loadedRef.current = false;
+    (async () => {
+      try {
+        const { data: row } = await supabase.from("user_data").select("value").eq("user_id", userId).eq("key", key).maybeSingle();
+        setData(row && Array.isArray(row.value) ? row.value : []);
+      } catch (e) {
+        setData([]);
+      }
+      loadedRef.current = true;
+      onReady();
+    })();
+  }, [userId]);
+
+  useEffect(() => {
+    if (!loadedRef.current || !userIdRef.current) return;
+    onSaveStateChange?.(true);
+    supabase.from("user_data").upsert({ user_id: userIdRef.current, key, value: data, updated_at: new Date().toISOString() })
+      .then(() => {})
+      .catch(() => {})
+      .finally(() => onSaveStateChange?.(false));
   }, [data]);
+
   return [data, setData];
 }
 
@@ -176,12 +196,56 @@ function Field({ label, children, hint }) {
   );
 }
 
-const inputCls = "w-full px-3 py-2 rounded-xl outline-none text-sm transition-colors";
+const inputCls = "w-full px-3 py-2 rounded-xl outline-none text-base transition-colors";
 const inputStyle = { border: "1.5px solid rgba(11,42,44,0.12)", background: "#fff", color: "var(--ink)" };
 
 function TextInput(props) { return <input {...props} className={inputCls + " " + (props.className || "")} style={{ ...inputStyle, ...props.style }} />; }
 function Select(props) { return <select {...props} className={inputCls + " " + (props.className || "")} style={{ ...inputStyle, ...props.style }}>{props.children}</select>; }
 function TextArea(props) { return <textarea {...props} className={inputCls + " " + (props.className || "")} style={{ ...inputStyle, minHeight: 70, ...props.style }} />; }
+
+const MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+function DateInput({ value, onChange }) {
+  const parseValue = (v) => {
+    if (!v) return { y: "", m: "", d: "" };
+    const [y, m, d] = v.split("-");
+    return { y, m: String(Number(m)), d: String(Number(d)) };
+  };
+  const [parts, setParts] = useState(parseValue(value));
+  useEffect(() => { setParts(parseValue(value)); }, [value]);
+
+  const daysInMonth = (y, m) => (y && m) ? new Date(+y, +m, 0).getDate() : 31;
+  const maxDay = daysInMonth(parts.y, parts.m);
+  const years = useMemo(() => { const cy = new Date().getFullYear(); const arr = []; for (let y = cy + 5; y >= cy - 20; y--) arr.push(y); return arr; }, []);
+
+  const handle = (next) => {
+    const dim = daysInMonth(next.y, next.m);
+    if (next.d && +next.d > dim) next = { ...next, d: String(dim) };
+    setParts(next);
+    if (next.y && next.m && next.d) {
+      onChange(`${next.y}-${String(next.m).padStart(2, "0")}-${String(next.d).padStart(2, "0")}`);
+    } else {
+      onChange("");
+    }
+  };
+
+  return (
+    <div className="flex gap-2">
+      <Select value={parts.m} onChange={(e) => handle({ ...parts, m: e.target.value })} className="flex-1">
+        <option value="">Month</option>
+        {MONTH_NAMES.map((name, i) => <option key={i} value={i + 1}>{name}</option>)}
+      </Select>
+      <Select value={parts.d} onChange={(e) => handle({ ...parts, d: e.target.value })} className="flex-1">
+        <option value="">Day</option>
+        {Array.from({ length: maxDay }, (_, i) => i + 1).map((d) => <option key={d} value={d}>{d}</option>)}
+      </Select>
+      <Select value={parts.y} onChange={(e) => handle({ ...parts, y: e.target.value })} className="flex-1">
+        <option value="">Year</option>
+        {years.map((y) => <option key={y} value={y}>{y}</option>)}
+      </Select>
+    </div>
+  );
+}
 
 function Btn({ children, onClick, accent = "#4F8F52", variant = "solid", type = "button", className = "", title }) {
   const base = "inline-flex items-center gap-1.5 px-4 py-2 text-sm font-bold transition-transform active:scale-95 " + (variant === "solid" ? "rounded-full" : "rounded-xl");
@@ -247,6 +311,21 @@ function Badge({ children, color, bg }) {
   return <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold" style={{ color: color || "#fff", background: bg }}>{children}</span>;
 }
 
+function ToggleSwitch({ checked, onChange, label, accent = "#4F8F52" }) {
+  return (
+    <button
+      type="button"
+      onClick={(e) => { e.stopPropagation(); onChange(!checked); }}
+      className="inline-flex items-center gap-2"
+    >
+      <span className="relative inline-block w-9 h-5 rounded-full flex-shrink-0 transition-colors" style={{ background: checked ? accent : "rgba(11,42,44,0.18)" }}>
+        <span className="absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform" style={{ transform: checked ? "translateX(16px)" : "translateX(0)" }} />
+      </span>
+      {label && <span className="text-sm font-semibold">{label}</span>}
+    </button>
+  );
+}
+
 function StatPill({ label, value, accent }) {
   return (
     <div className="rounded-xl px-3 py-2 flex-1 min-w-[86px]" style={{ background: accent + "12" }}>
@@ -256,25 +335,135 @@ function StatPill({ label, value, accent }) {
   );
 }
 
-function PhotoSlot({ value, onChange, label = "Photo", shape = "egg" }) {
+function PhotoSlot({ value, onChange, label = "Photo", shape = "egg", fit = "cover" }) {
   const ref = useRef(null);
   const [busy, setBusy] = useState(false);
+  const [cropSrc, setCropSrc] = useState(null);
   const handle = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    setBusy(true);
-    try { onChange(await resizeImage(file, 480)); } finally { setBusy(false); }
+    if (fit === "contain") {
+      setBusy(true);
+      try { onChange(await resizeImage(file, 480)); } finally { setBusy(false); }
+    } else {
+      const reader = new FileReader();
+      reader.onload = () => setCropSrc(reader.result);
+      reader.readAsDataURL(file);
+    }
+    e.target.value = "";
   };
   return (
     <div>
       <span className="block text-xs font-bold uppercase mb-1" style={{ color: "var(--teal)" }}>{label}</span>
       <div onClick={() => ref.current?.click()} className="relative w-24 h-24 flex items-center justify-center cursor-pointer overflow-hidden border-2"
         style={{ borderRadius: shape === "egg" ? "50% 50% 48% 48% / 62% 62% 40% 40%" : 16, borderColor: "rgba(11,42,44,0.15)", background: "#fff" }}>
-        {busy ? <Loader2 className="animate-spin" size={20} style={{ color: "var(--teal)" }} /> : value ? <img src={value} alt="" className="w-full h-full object-cover" /> : <Camera size={22} style={{ color: "var(--slate)" }} />}
+        {busy ? <Loader2 className="animate-spin" size={20} style={{ color: "var(--teal)" }} /> : value ? <img src={value} alt="" className={"w-full h-full " + (fit === "contain" ? "object-contain" : "object-cover")} /> : <Camera size={22} style={{ color: "var(--slate)" }} />}
       </div>
-      {value && <button onClick={() => onChange(null)} className="text-xs mt-1 underline" style={{ color: "var(--danger)" }}>Remove</button>}
+      <div className="flex items-center gap-2 mt-1">
+        {value && fit !== "contain" && <button onClick={() => setCropSrc(value)} className="text-xs underline" style={{ color: "var(--teal)" }}>Adjust crop</button>}
+        {value && <button onClick={() => onChange(null)} className="text-xs underline" style={{ color: "var(--danger)" }}>Remove</button>}
+      </div>
       <input ref={ref} type="file" accept="image/*" className="hidden" onChange={handle} />
+      {cropSrc && (
+        <ImageCropModal
+          src={cropSrc}
+          shape={shape}
+          onCancel={() => setCropSrc(null)}
+          onApply={(cropped) => { onChange(cropped); setCropSrc(null); }}
+        />
+      )}
     </div>
+  );
+}
+
+function ImageCropModal({ src, shape, onCancel, onApply }) {
+  const FRAME = 260;
+  const OUTPUT = 480;
+  const imgRef = useRef(null);
+  const dragRef = useRef(null);
+  const [natural, setNatural] = useState({ w: 0, h: 0 });
+  const [minScale, setMinScale] = useState(1);
+  const [scale, setScale] = useState(1);
+  const [pan, setPan] = useState({ x: 0, y: 0 });
+
+  const clampPan = (p, s, n) => {
+    const dw = n.w * s, dh = n.h * s;
+    const minX = FRAME - dw, minY = FRAME - dh;
+    return { x: Math.min(0, Math.max(minX, p.x)), y: Math.min(0, Math.max(minY, p.y)) };
+  };
+
+  const onImgLoad = (e) => {
+    const w = e.target.naturalWidth, h = e.target.naturalHeight;
+    const ms = Math.max(FRAME / w, FRAME / h);
+    setNatural({ w, h });
+    setMinScale(ms);
+    setScale(ms);
+    setPan({ x: (FRAME - w * ms) / 2, y: (FRAME - h * ms) / 2 });
+  };
+
+  const onPointerDown = (e) => {
+    e.preventDefault();
+    dragRef.current = { startX: e.clientX, startY: e.clientY, panX: pan.x, panY: pan.y };
+    e.currentTarget.setPointerCapture(e.pointerId);
+  };
+  const onPointerMove = (e) => {
+    if (!dragRef.current || !natural.w) return;
+    e.preventDefault();
+    const dx = e.clientX - dragRef.current.startX;
+    const dy = e.clientY - dragRef.current.startY;
+    setPan(clampPan({ x: dragRef.current.panX + dx, y: dragRef.current.panY + dy }, scale, natural));
+  };
+  const onPointerUp = (e) => { e.preventDefault(); dragRef.current = null; };
+
+  const handleZoom = (e) => {
+    const newScale = parseFloat(e.target.value);
+    const cx = FRAME / 2, cy = FRAME / 2;
+    const imgX = (cx - pan.x) / scale, imgY = (cy - pan.y) / scale;
+    const newPan = { x: cx - imgX * newScale, y: cy - imgY * newScale };
+    setScale(newScale);
+    setPan(clampPan(newPan, newScale, natural));
+  };
+
+  const apply = () => {
+    const canvas = document.createElement("canvas");
+    canvas.width = OUTPUT;
+    canvas.height = OUTPUT;
+    const ctx = canvas.getContext("2d");
+    const sx = -pan.x / scale, sy = -pan.y / scale;
+    const sSize = FRAME / scale;
+    ctx.drawImage(imgRef.current, sx, sy, sSize, sSize, 0, 0, OUTPUT, OUTPUT);
+    onApply(canvas.toDataURL("image/jpeg", 0.85));
+  };
+
+  return (
+    <Modal title="Adjust photo" accent="var(--teal)" onClose={onCancel}>
+      <p className="text-xs mb-3" style={{ color: "var(--slate)" }}>Drag to reposition. Use the slider to zoom in or out.</p>
+      <div
+        className="relative mx-auto overflow-hidden select-none"
+        style={{ width: FRAME, height: FRAME, borderRadius: shape === "egg" ? "50% 50% 48% 48% / 62% 62% 40% 40%" : 16, background: "#1B2E1F", border: "2px solid rgba(11,42,44,0.15)", cursor: "grab", touchAction: "none" }}
+        onPointerDown={onPointerDown}
+        onPointerMove={onPointerMove}
+        onPointerUp={onPointerUp}
+        onPointerCancel={onPointerUp}
+      >
+        <img
+          ref={imgRef}
+          src={src}
+          alt=""
+          draggable={false}
+          onLoad={onImgLoad}
+          style={{ position: "absolute", left: pan.x, top: pan.y, width: natural.w * scale || 0, height: natural.h * scale || 0, maxWidth: "none" }}
+        />
+      </div>
+      <input
+        type="range" min={minScale} max={minScale * 3} step={0.001} value={scale}
+        onChange={handleZoom} className="w-full mt-4" style={{ accentColor: "var(--teal)" }}
+      />
+      <div className="flex justify-end gap-2 mt-3">
+        <Btn variant="ghost" accent="rgba(11,42,44,0.5)" onClick={onCancel}>Cancel</Btn>
+        <Btn accent="var(--teal)" onClick={apply}><Check size={15} /> Use this crop</Btn>
+      </div>
+    </Modal>
   );
 }
 
@@ -460,6 +649,10 @@ function FlockTab({ chickens, setChickens, healthRecords, jumpToChickenId, onJum
     setModal(null);
   };
   const remove = (id) => { setChickens((cs) => cs.filter((c) => c.id !== id)); setDetail(null); setConfirmDelete(null); };
+  const toggleLaying = (id) => {
+    setChickens((cs) => cs.map((c) => (c.id === id ? { ...c, laying: !c.laying } : c)));
+    setDetail((d) => (d && d.id === id ? { ...d, laying: !d.laying } : d));
+  };
 
   return (
     <div>
@@ -498,9 +691,15 @@ function FlockTab({ chickens, setChickens, healthRecords, jumpToChickenId, onJum
                   {c.status === "sold" && <Badge bg="#8C6D3F33" color="#8C6D3F">sold</Badge>}
                 </div>
                 <p className="text-xs" style={{ color: "var(--slate)" }}>{c.breed || "Unknown breed"} · {ageString(c.hatchDate)}</p>
-                <div className="flex items-center gap-1.5 mt-1.5">
+                {c.origin && <p className="text-xs italic truncate" style={{ color: "var(--slate)" }}>From: {c.origin}</p>}
+                <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
                   <Badge bg={sexBadgeColor(c.sex)}>{c.sex || "unknown"}</Badge>
                   {c.pen && <Badge bg="#3D7A4A">{c.pen}</Badge>}
+                  {c.sex === "hen" && (
+                    <button onClick={(e) => { e.stopPropagation(); toggleLaying(c.id); }} title="Tap to toggle laying status">
+                      <Badge bg={c.laying ? "#4F8F52" : "#6B756133"} color={c.laying ? "#fff" : "#6B7561"}>{c.laying ? "Laying" : "Not laying"}</Badge>
+                    </button>
+                  )}
                 </div>
               </div>
             </div>
@@ -510,7 +709,7 @@ function FlockTab({ chickens, setChickens, healthRecords, jumpToChickenId, onJum
 
       {detail && (
         <Modal title={detail.name || "Bird detail"} accent={accent} onClose={() => setDetail(null)} wide>
-          <ChickenDetail chicken={detail} chickens={chickens} healthRecords={healthRecords} onEdit={() => { setModal({ data: detail }); setDetail(null); }} onDelete={() => setConfirmDelete(detail.id)} />
+          <ChickenDetail chicken={detail} chickens={chickens} healthRecords={healthRecords} onEdit={() => { setModal({ data: detail }); setDetail(null); }} onDelete={() => setConfirmDelete(detail.id)} onToggleLaying={() => toggleLaying(detail.id)} />
         </Modal>
       )}
       {modal && <ChickenForm accent={accent} initial={modal.data} chickens={chickens} onSave={save} onClose={() => setModal(null)} />}
@@ -521,7 +720,7 @@ function FlockTab({ chickens, setChickens, healthRecords, jumpToChickenId, onJum
   );
 }
 
-function ChickenDetail({ chicken: c, chickens, healthRecords, onEdit, onDelete }) {
+function ChickenDetail({ chicken: c, chickens, healthRecords, onEdit, onDelete, onToggleLaying }) {
   const dam = chickens.find((x) => x.id === c.damId);
   const sire = chickens.find((x) => x.id === c.sireId);
   const children = chickens.filter((x) => x.damId === c.id || x.sireId === c.id);
@@ -543,6 +742,7 @@ function ChickenDetail({ chicken: c, chickens, healthRecords, onEdit, onDelete }
           <p><span className="font-bold" style={{ color: "var(--teal)" }}>Hatched:</span> {fmtDate(c.hatchDate)} ({ageString(c.hatchDate)})</p>
           <p><span className="font-bold" style={{ color: "var(--teal)" }}>Band #:</span> <span className="font-mono">{c.bandNumber || "—"}</span></p>
           <p><span className="font-bold" style={{ color: "var(--teal)" }}>Pen:</span> {c.pen || "—"}</p>
+          <p><span className="font-bold" style={{ color: "var(--teal)" }}>Origin:</span> {c.origin || "—"}</p>
           {c.sex === "hen" && <p className="flex items-center gap-1.5"><span className="font-bold" style={{ color: "var(--teal)" }}>Egg color:</span> <EggShape size={11} fill={eggColorHex(c.eggColor)} /> {c.eggColor || "—"}</p>}
           {c.sex === "hen" && <p><span className="font-bold" style={{ color: "var(--teal)" }}>Egg size:</span> {c.eggSize || "—"}</p>}
         </div>
@@ -550,7 +750,13 @@ function ChickenDetail({ chicken: c, chickens, healthRecords, onEdit, onDelete }
       {c.eggPhoto && (
         <div className="mb-4">
           <p className="text-xs font-bold uppercase mb-1" style={{ color: "var(--teal)" }}>Egg sample</p>
-          <img src={c.eggPhoto} className="w-20 h-20 object-cover rounded-xl" />
+          <img src={c.eggPhoto} className="w-20 h-20 object-contain rounded-xl border" style={{ background: "#fff", borderColor: "rgba(11,42,44,0.12)" }} />
+        </div>
+      )}
+      {c.sex === "hen" && (
+        <div className="mb-4 flex items-center gap-3">
+          <span className="text-xs font-bold uppercase" style={{ color: "var(--teal)" }}>Laying status</span>
+          <ToggleSwitch checked={!!c.laying} onChange={onToggleLaying} label={c.laying ? "Currently laying" : "Not laying yet"} accent="#4F8F52" />
         </div>
       )}
       {(dam || sire) && (
@@ -588,11 +794,12 @@ function ChickenDetail({ chicken: c, chickens, healthRecords, onEdit, onDelete }
 }
 
 function ChickenForm({ accent, initial, chickens, onSave, onClose }) {
-  const [f, setF] = useState({ name: "", hatchDate: "", breed: "", sex: "unknown", bandNumber: "", pen: "", eggColor: "", eggSize: "", photo: null, eggPhoto: null, notes: "", damId: "", sireId: "", status: "active", ...initial });
+  const [f, setF] = useState({ name: "", hatchDate: "", breed: "", sex: "unknown", bandNumber: "", pen: "", eggColor: "", eggSize: "", photo: null, eggPhoto: null, notes: "", damId: "", sireId: "", status: "active", laying: false, origin: "", ...initial });
   const [customColor, setCustomColor] = useState(!!f.eggColor && !EGG_COLORS.some((c) => c.name === f.eggColor));
   const [customSize, setCustomSize] = useState(!!f.eggSize && !EGG_SIZES.includes(f.eggSize));
   const pens = useMemo(() => [...new Set(chickens.map((c) => c.pen).filter(Boolean))], [chickens]);
   const [customPen, setCustomPen] = useState(!!f.pen && !pens.includes(f.pen));
+  const [customOrigin, setCustomOrigin] = useState(!!f.origin && !ORIGIN_PRESETS.includes(f.origin));
   const hens = chickens.filter((c) => c.sex === "hen" && c.id !== initial.id);
   const roosters = chickens.filter((c) => c.sex === "rooster" && c.id !== initial.id);
   return (
@@ -604,7 +811,7 @@ function ChickenForm({ accent, initial, chickens, onSave, onClose }) {
             <option value="hen">Hen</option><option value="rooster">Rooster</option><option value="unknown">Unknown / not yet sexed</option>
           </Select>
         </Field>
-        <Field label="Hatch date"><TextInput type="date" value={f.hatchDate} onChange={(e) => setF({ ...f, hatchDate: e.target.value })} /></Field>
+        <Field label="Hatch date"><DateInput value={f.hatchDate} onChange={(v) => setF({ ...f, hatchDate: v })} /></Field>
         <Field label="Breed"><TextInput value={f.breed} onChange={(e) => setF({ ...f, breed: e.target.value })} placeholder="Easter Egger" /></Field>
         <Field label="Band number"><TextInput value={f.bandNumber} onChange={(e) => setF({ ...f, bandNumber: e.target.value })} placeholder="A-014" /></Field>
         <Field label="Pen">
@@ -621,6 +828,22 @@ function ChickenForm({ accent, initial, chickens, onSave, onClose }) {
           </Select>
           {customPen && (
             <TextInput className="mt-2" value={f.pen} onChange={(e) => setF({ ...f, pen: e.target.value })} placeholder="e.g. Pen 3" />
+          )}
+        </Field>
+        <Field label="Origin" hint="Where this bird came from">
+          <Select
+            value={customOrigin ? "__custom__" : f.origin}
+            onChange={(e) => {
+              if (e.target.value === "__custom__") { setCustomOrigin(true); setF({ ...f, origin: "" }); }
+              else { setCustomOrigin(false); setF({ ...f, origin: e.target.value }); }
+            }}
+          >
+            <option value="">Not specified</option>
+            {ORIGIN_PRESETS.map((o) => <option key={o} value={o}>{o}</option>)}
+            <option value="__custom__">Other (type your own)</option>
+          </Select>
+          {customOrigin && (
+            <TextInput className="mt-2" value={f.origin} onChange={(e) => setF({ ...f, origin: e.target.value })} placeholder="e.g. Tractor Supply" />
           )}
         </Field>
         {f.sex === "hen" && (
@@ -657,6 +880,11 @@ function ChickenForm({ accent, initial, chickens, onSave, onClose }) {
             {customSize && (
               <TextInput className="mt-2" value={f.eggSize} onChange={(e) => setF({ ...f, eggSize: e.target.value })} placeholder="e.g. extra-extra-large" />
             )}
+          </Field>
+        )}
+        {f.sex === "hen" && (
+          <Field label="Laying status">
+            <ToggleSwitch checked={!!f.laying} onChange={(v) => setF({ ...f, laying: v })} label={f.laying ? "Currently laying" : "Not laying yet"} accent="#4F8F52" />
           </Field>
         )}
         <Field label="Dam (mother)">
@@ -730,6 +958,9 @@ function IncubatorTab({ incubators, setIncubators, chickens, setChickens, breedi
               onAddToFlock={(egg) => setHatchModal({ incubatorId: inc.id, egg })}
               onAddReminders={() => addReminders(inc)}
               onUpdateNotes={(eggId, notes) => setIncubators((arr) => arr.map((i) => i.id !== inc.id ? i : { ...i, eggs: i.eggs.map((e) => (e.id === eggId ? { ...e, notes } : e)) }))}
+              onDeleteEgg={(eggId) => setIncubators((arr) => arr.map((i) => i.id !== inc.id ? i : { ...i, eggs: i.eggs.filter((e) => e.id !== eggId) }))}
+              onUpdateEgg={(eggId, updates) => setIncubators((arr) => arr.map((i) => i.id !== inc.id ? i : { ...i, eggs: i.eggs.map((e) => (e.id === eggId ? { ...e, ...updates } : e)) }))}
+              onUpdateEggPhoto={(eggId, photo) => setIncubators((arr) => arr.map((i) => i.id !== inc.id ? i : { ...i, eggs: i.eggs.map((e) => (e.id === eggId ? { ...e, photo } : e)) }))}
             />
           ))}
         </div>
@@ -741,7 +972,7 @@ function IncubatorTab({ incubators, setIncubators, chickens, setChickens, breedi
       )}
       {hatchModal && (
         <ChickenForm accent={accent}
-          initial={{ breed: hatchModal.egg.breed, hatchDate: hatchModal.egg.hatchedDate || todayStr(), damId: hatchModal.egg.damId || "", sireId: hatchModal.egg.sireId || "", sex: "unknown" }}
+          initial={{ breed: hatchModal.egg.breed, hatchDate: hatchModal.egg.hatchedDate || todayStr(), damId: hatchModal.egg.damId || "", sireId: hatchModal.egg.sireId || "", sex: "unknown", origin: "Hatched in my incubator" }}
           chickens={chickens} onClose={() => setHatchModal(null)}
           onSave={(data) => {
             const newId = uid();
@@ -757,27 +988,36 @@ function IncubatorTab({ incubators, setIncubators, chickens, setChickens, breedi
   );
 }
 
-function IncubatorCard({ inc, accent, breedingPairs, chickens, onEdit, onDelete, onAddEggs, onRemoveEgg, onHatchEgg, onAddToFlock, onAddReminders, onUpdateNotes }) {
+function IncubatorCard({ inc, accent, breedingPairs, chickens, onEdit, onDelete, onAddEggs, onRemoveEgg, onHatchEgg, onAddToFlock, onAddReminders, onUpdateNotes, onDeleteEgg, onUpdateEgg, onUpdateEggPhoto }) {
   const [open, setOpen] = useState(true);
   const [reasonFor, setReasonFor] = useState(null);
   const [noteFor, setNoteFor] = useState(null);
+  const [photoFor, setPhotoFor] = useState(null);
+  const [editEgg, setEditEgg] = useState(null);
+  const [confirmDeleteEgg, setConfirmDeleteEgg] = useState(null);
   const total = inc.eggs.length;
   const hatched = inc.eggs.filter((e) => e.status === "hatched").length;
   const removed = inc.eggs.filter((e) => e.status === "removed").length;
   const incubating = total - hatched - removed;
   const rate = total ? Math.round((hatched / total) * 100) : 0;
   const days = inc.incubationDays || 21;
+  const orderedEggs = inc.eggs.slice().sort((a, b) => a.setDate.localeCompare(b.setDate));
 
   return (
     <div className="rounded-2xl bg-white shadow-sm overflow-hidden" style={{ borderTop: `3px solid ${accent}` }}>
       <div className="p-4 flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <div className="flex items-center gap-2">
-            <button onClick={() => setOpen(!open)}><ChevronDown size={16} className={open ? "" : "-rotate-90"} style={{ transition: "transform .15s" }} /></button>
-            <h3 className="font-bold text-lg" style={{ fontFamily: "'Playfair Display', serif" }}>{inc.name}</h3>
-            <Badge bg={accent}>{inc.species || "Chicken"}</Badge>
+        <div className="flex items-start gap-3">
+          {inc.photo && (
+            <img src={inc.photo} className="w-14 h-14 rounded-xl object-contain flex-shrink-0 border" style={{ background: "#fff", borderColor: "rgba(11,42,44,0.12)" }} alt="Carton" />
+          )}
+          <div>
+            <div className="flex items-center gap-2">
+              <button onClick={() => setOpen(!open)}><ChevronDown size={16} className={open ? "" : "-rotate-90"} style={{ transition: "transform .15s" }} /></button>
+              <h3 className="font-bold text-lg" style={{ fontFamily: "'Playfair Display', serif" }}>{inc.name}</h3>
+              <Badge bg={accent}>{inc.species || "Chicken"}</Badge>
+            </div>
+            <p className="text-xs ml-6" style={{ color: "var(--slate)" }}>Started {fmtDate(inc.startDate)} · {days}-day cycle</p>
           </div>
-          <p className="text-xs ml-6" style={{ color: "var(--slate)" }}>Started {fmtDate(inc.startDate)} · {days}-day cycle</p>
         </div>
         <div className="flex gap-1.5">
           <IconBtn icon={BellRing} onClick={onAddReminders} title="Add hatch reminders" accent="var(--teal)" />
@@ -799,12 +1039,18 @@ function IncubatorCard({ inc, accent, breedingPairs, chickens, onEdit, onDelete,
           <Btn accent={accent} variant="ghost" className="mb-3" onClick={onAddEggs}><Plus size={14} /> Add eggs</Btn>
           {inc.eggs.length === 0 ? <p className="text-sm" style={{ color: "var(--slate)" }}>No eggs set yet.</p> : (
             <div className="space-y-1.5">
-              {inc.eggs.slice().sort((a, b) => a.setDate.localeCompare(b.setDate)).map((egg) => {
+              {orderedEggs.map((egg, idx) => {
                 const dayCount = egg.status === "incubating" ? daysBetween(egg.setDate, todayStr()) : null;
                 const glow = dayCount != null ? Math.max(0.14, Math.min(1, dayCount / days)) : 0;
                 return (
-                  <div key={egg.id} className="flex items-center gap-3 py-1.5 px-2 rounded-lg" style={{ background: "rgba(14,124,134,0.05)" }}>
+                  <div key={egg.id} className="flex items-center gap-2.5 py-1.5 px-2 rounded-lg flex-wrap" style={{ background: "rgba(14,124,134,0.05)" }}>
+                    <span className="text-xs font-mono font-bold w-5 text-right flex-shrink-0" style={{ color: "var(--slate)" }}>{idx + 1}</span>
                     <EggShape size={21} fill="#F5F1E6" glow={egg.status === "incubating" ? glow : 0} ring={egg.status === "hatched" ? "#4F8F52" : egg.status === "removed" ? "#6B7561" : null} />
+                    {egg.photo && (
+                      <button onClick={() => setPhotoFor(egg.id)} className="w-7 h-7 rounded-lg overflow-hidden border flex-shrink-0" style={{ borderColor: "rgba(11,42,44,0.15)" }} title="View egg photo">
+                        <img src={egg.photo} className="w-full h-full object-contain" style={{ background: "#fff" }} />
+                      </button>
+                    )}
                     <div className="flex-1 min-w-0">
                       <p className="text-sm font-semibold truncate">{egg.breed || "Unmarked breed"}</p>
                       <p className="text-xs font-mono" style={{ color: "var(--slate)" }}>
@@ -815,7 +1061,12 @@ function IncubatorCard({ inc, accent, breedingPairs, chickens, onEdit, onDelete,
                       </p>
                       {egg.notes && <p className="text-xs italic truncate mt-0.5" style={{ color: accent }}>"{egg.notes}"</p>}
                     </div>
-                    <IconBtn icon={StickyNote} accent={egg.notes ? accent : "var(--slate)"} title={egg.notes ? "Edit note" : "Add note"} onClick={() => setNoteFor(egg.id)} />
+                    <div className="flex items-center gap-0.5 flex-shrink-0">
+                      <IconBtn icon={Camera} accent={egg.photo ? accent : "var(--slate)"} title={egg.photo ? "View/replace egg photo" : "Add egg photo"} onClick={() => setPhotoFor(egg.id)} />
+                      <IconBtn icon={StickyNote} accent={egg.notes ? accent : "var(--slate)"} title={egg.notes ? "Edit note" : "Add note"} onClick={() => setNoteFor(egg.id)} />
+                      <IconBtn icon={Pencil} title="Edit egg" onClick={() => setEditEgg(egg)} />
+                      <IconBtn icon={Trash2} accent="var(--danger)" title="Remove from incubator entirely" onClick={() => setConfirmDeleteEgg(egg.id)} />
+                    </div>
                     {egg.status === "incubating" && (
                       <div className="flex gap-1">
                         <Btn accent="#4F8F52" className="!px-2 !py-1 !text-xs" onClick={() => onHatchEgg(egg.id)}>Hatched</Btn>
@@ -851,6 +1102,66 @@ function IncubatorCard({ inc, accent, breedingPairs, chickens, onEdit, onDelete,
           />
         </Modal>
       )}
+
+      {photoFor && (
+        <Modal title="Egg photo" accent={accent} onClose={() => setPhotoFor(null)}>
+          <EggPhotoForm
+            initial={inc.eggs.find((e) => e.id === photoFor)?.photo || null}
+            onSave={(photo) => { onUpdateEggPhoto(photoFor, photo); setPhotoFor(null); }}
+            accent={accent}
+          />
+        </Modal>
+      )}
+
+      {editEgg && (
+        <Modal title="Edit egg" accent={accent} onClose={() => setEditEgg(null)}>
+          <EggEditForm
+            initial={editEgg}
+            breedingPairs={breedingPairs}
+            chickens={chickens}
+            onSave={(updates) => { onUpdateEgg(editEgg.id, updates); setEditEgg(null); }}
+            accent={accent}
+          />
+        </Modal>
+      )}
+
+      {confirmDeleteEgg && (
+        <ConfirmDialog
+          message="Remove this egg from the incubator entirely? This is different from marking it removed — it deletes the entry completely, for when one was added by mistake. This cannot be undone."
+          onConfirm={() => { onDeleteEgg(confirmDeleteEgg); setConfirmDeleteEgg(null); }}
+          onCancel={() => setConfirmDeleteEgg(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+function EggEditForm({ initial, breedingPairs, chickens, onSave, accent }) {
+  const [f, setF] = useState({ breed: "", setDate: todayStr(), breedingPairId: null, damId: null, sireId: null, ...initial });
+  return (
+    <div>
+      <Field label="Linked breeding pair (optional)" hint="Changing this updates parentage for lineage tracking">
+        <Select
+          value={f.breedingPairId || ""}
+          onChange={(e) => {
+            const p = breedingPairs.find((bp) => bp.id === e.target.value);
+            const hen = chickens.find((c) => c.id === p?.henId);
+            setF({ ...f, breedingPairId: e.target.value || null, damId: p?.henId || null, sireId: p?.roosterId || null, breed: hen?.breed || f.breed });
+          }}
+        >
+          <option value="">None</option>
+          {breedingPairs.map((p) => {
+            const r = chickens.find((c) => c.id === p.roosterId);
+            const h = chickens.find((c) => c.id === p.henId);
+            return <option key={p.id} value={p.id}>{r?.name || "?"} × {h?.name || "?"}</option>;
+          })}
+        </Select>
+      </Field>
+      <Field label="Breed"><TextInput value={f.breed} onChange={(e) => setF({ ...f, breed: e.target.value })} placeholder="Olive Egger" /></Field>
+      <Field label="Set date"><DateInput value={f.setDate} onChange={(v) => setF({ ...f, setDate: v })} /></Field>
+      <div className="flex justify-end gap-2 mt-2">
+        <Btn accent={accent} onClick={() => onSave(f)}><Check size={15} /> Save changes</Btn>
+      </div>
     </div>
   );
 }
@@ -869,8 +1180,20 @@ function EggNoteForm({ initial, onSave, accent }) {
   );
 }
 
+function EggPhotoForm({ initial, onSave, accent }) {
+  const [photo, setPhoto] = useState(initial);
+  return (
+    <div>
+      <PhotoSlot value={photo} onChange={setPhoto} label="Egg photo" shape="square" fit="contain" />
+      <div className="flex justify-end gap-2 mt-3">
+        <Btn accent={accent} onClick={() => onSave(photo)}><Check size={15} /> Save</Btn>
+      </div>
+    </div>
+  );
+}
+
 function IncubatorForm({ accent, initial, onSave, onClose }) {
-  const [f, setF] = useState({ name: "", species: "Chicken", incubationDays: 21, startDate: todayStr(), ...initial });
+  const [f, setF] = useState({ name: "", species: "Chicken", incubationDays: 21, startDate: todayStr(), photo: null, ...initial });
   return (
     <Modal title={initial.id ? "Edit incubator" : "New incubator"} accent={accent} onClose={onClose}>
       <Field label="Name"><TextInput value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} placeholder="Incubator 1" /></Field>
@@ -880,7 +1203,10 @@ function IncubatorForm({ accent, initial, onSave, onClose }) {
         </Select>
       </Field>
       <Field label="Incubation length (days)"><TextInput type="number" value={f.incubationDays} onChange={(e) => setF({ ...f, incubationDays: +e.target.value })} /></Field>
-      <Field label="Start date"><TextInput type="date" value={f.startDate} onChange={(e) => setF({ ...f, startDate: e.target.value })} /></Field>
+      <Field label="Start date"><DateInput value={f.startDate} onChange={(v) => setF({ ...f, startDate: v })} /></Field>
+      <div className="mb-3">
+        <PhotoSlot value={f.photo} onChange={(v) => setF({ ...f, photo: v })} label="Carton photo (optional)" shape="square" fit="contain" />
+      </div>
       <div className="flex justify-end gap-2 mt-2">
         <Btn variant="ghost" accent="rgba(11,42,44,0.5)" onClick={onClose}>Cancel</Btn>
         <Btn accent={accent} onClick={() => onSave(f)}><Check size={15} /> Save</Btn>
@@ -902,10 +1228,10 @@ function EggBatchForm({ accent, breedingPairs, chickens, onSave, onClose }) {
       </Field>
       <Field label="Breed"><TextInput value={f.breed} onChange={(e) => setF({ ...f, breed: e.target.value })} placeholder="Olive Egger" /></Field>
       <Field label="Quantity"><TextInput type="number" min={1} value={f.quantity} onChange={(e) => setF({ ...f, quantity: +e.target.value })} /></Field>
-      <Field label="Set date"><TextInput type="date" value={f.setDate} onChange={(e) => setF({ ...f, setDate: e.target.value })} /></Field>
+      <Field label="Set date"><DateInput value={f.setDate} onChange={(v) => setF({ ...f, setDate: v })} /></Field>
       <div className="flex justify-end gap-2 mt-2">
         <Btn variant="ghost" accent="rgba(11,42,44,0.5)" onClick={onClose}>Cancel</Btn>
-        <Btn accent={accent} onClick={() => { const eggs = Array.from({ length: Math.max(1, f.quantity) }, () => ({ id: uid(), breed: f.breed, setDate: f.setDate, status: "incubating", breedingPairId: f.breedingPairId || null, damId: pair?.henId || null, sireId: pair?.roosterId || null, addedToFlock: false, notes: "" })); onSave(eggs); }}>
+        <Btn accent={accent} onClick={() => { const eggs = Array.from({ length: Math.max(1, f.quantity) }, () => ({ id: uid(), breed: f.breed, setDate: f.setDate, status: "incubating", breedingPairId: f.breedingPairId || null, damId: pair?.henId || null, sireId: pair?.roosterId || null, addedToFlock: false, notes: "", photo: null })); onSave(eggs); }}>
           <Check size={15} /> Add {f.quantity} egg{f.quantity == 1 ? "" : "s"}
         </Btn>
       </div>
@@ -1406,7 +1732,7 @@ function CostForm({ initial, onSave, accent }) {
         </Select>
       </Field>
       <Field label="Amount ($)"><TextInput type="number" step="0.01" value={f.amount} onChange={(e) => setF({ ...f, amount: e.target.value })} placeholder="42.50" /></Field>
-      <Field label="Date"><TextInput type="date" value={f.date} onChange={(e) => setF({ ...f, date: e.target.value })} /></Field>
+      <Field label="Date"><DateInput value={f.date} onChange={(v) => setF({ ...f, date: v })} /></Field>
       <Field label="Notes"><TextArea value={f.notes} onChange={(e) => setF({ ...f, notes: e.target.value })} placeholder="50lb bag of layer feed, Tractor Supply" /></Field>
       <div className="flex justify-end gap-2 mt-2"><Btn accent={accent} onClick={() => onSave(f)}><Check size={15} /> Save</Btn></div>
     </div>
@@ -1420,7 +1746,7 @@ function SaleForm({ initial, onSave, accent }) {
       <Field label="Customer"><TextInput value={f.customer} onChange={(e) => setF({ ...f, customer: e.target.value })} placeholder="Sarah next door" /></Field>
       <Field label="Eggs sold"><TextInput type="number" value={f.count} onChange={(e) => setF({ ...f, count: e.target.value })} placeholder="12" /></Field>
       <Field label="Amount received ($)"><TextInput type="number" step="0.01" value={f.amount} onChange={(e) => setF({ ...f, amount: e.target.value })} placeholder="6.00" /></Field>
-      <Field label="Date"><TextInput type="date" value={f.date} onChange={(e) => setF({ ...f, date: e.target.value })} /></Field>
+      <Field label="Date"><DateInput value={f.date} onChange={(v) => setF({ ...f, date: v })} /></Field>
       <Field label="Notes"><TextArea value={f.notes} onChange={(e) => setF({ ...f, notes: e.target.value })} /></Field>
       <div className="flex justify-end gap-2 mt-2"><Btn accent={accent} onClick={() => onSave(f)}><Check size={15} /> Save</Btn></div>
     </div>
@@ -1440,7 +1766,7 @@ function BirdSaleForm({ initial, chickens, onSave, accent }) {
       </Field>
       <Field label="Sold to"><TextInput value={f.buyer} onChange={(e) => setF({ ...f, buyer: e.target.value })} placeholder="Jane from the swap meet" /></Field>
       <Field label="Price ($)"><TextInput type="number" step="0.01" value={f.price} onChange={(e) => setF({ ...f, price: e.target.value })} placeholder="25.00" /></Field>
-      <Field label="Date"><TextInput type="date" value={f.date} onChange={(e) => setF({ ...f, date: e.target.value })} /></Field>
+      <Field label="Date"><DateInput value={f.date} onChange={(v) => setF({ ...f, date: v })} /></Field>
       <Field label="Notes"><TextArea value={f.notes} onChange={(e) => setF({ ...f, notes: e.target.value })} placeholder="Rehomed with laying flock, picked up at the farm" /></Field>
       <div className="flex justify-end gap-2 mt-2">
         <Btn
@@ -1557,10 +1883,10 @@ function HealthForm({ initial, chickens, pens, onSave, accent }) {
       <Field label="Type">
         <Select value={f.type} onChange={(e) => setF({ ...f, type: e.target.value })}>{HEALTH_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}</Select>
       </Field>
-      <Field label="Date"><TextInput type="date" value={f.date} onChange={(e) => setF({ ...f, date: e.target.value })} /></Field>
+      <Field label="Date"><DateInput value={f.date} onChange={(v) => setF({ ...f, date: v })} /></Field>
       <Field label="Description"><TextArea value={f.description} onChange={(e) => setF({ ...f, description: e.target.value })} placeholder="Wormed with Safe-Guard, dosage..." /></Field>
       <Field label="Weight (lb, optional)"><TextInput type="number" step="0.1" value={f.weight} onChange={(e) => setF({ ...f, weight: e.target.value })} /></Field>
-      <Field label="Next due date (optional)"><TextInput type="date" value={f.nextDueDate} onChange={(e) => setF({ ...f, nextDueDate: e.target.value })} /></Field>
+      <Field label="Next due date (optional)"><DateInput value={f.nextDueDate} onChange={(v) => setF({ ...f, nextDueDate: v })} /></Field>
       <div className="flex justify-end gap-2 mt-2">
         <Btn
           accent={accent}
@@ -1695,7 +2021,7 @@ function ReminderForm({ initial, onSave, accent }) {
           <option>Turning</option><option>Candling</option><option>Lockdown</option><option>Hatch day</option><option>Health</option><option>General</option>
         </Select>
       </Field>
-      <Field label="Due date"><TextInput type="date" value={f.dueDate} onChange={(e) => setF({ ...f, dueDate: e.target.value })} /></Field>
+      <Field label="Due date"><DateInput value={f.dueDate} onChange={(v) => setF({ ...f, dueDate: v })} /></Field>
       <Field label="Repeats" hint="Checking off a repeating reminder rolls it forward instead of completing it">
         <Select value={f.recurrence} onChange={(e) => setF({ ...f, recurrence: e.target.value })}>
           <option value="none">Doesn't repeat</option>
@@ -1769,7 +2095,7 @@ function MortalityForm({ chickens, onSave, onClose, accent }) {
       <Field label="Cause">
         <Select value={f.cause} onChange={(e) => setF({ ...f, cause: e.target.value })}>{MORTALITY_CAUSES.map((c) => <option key={c} value={c}>{c}</option>)}</Select>
       </Field>
-      <Field label="Date"><TextInput type="date" value={f.date} onChange={(e) => setF({ ...f, date: e.target.value })} /></Field>
+      <Field label="Date"><DateInput value={f.date} onChange={(v) => setF({ ...f, date: v })} /></Field>
       <Field label="Notes"><TextArea value={f.notes} onChange={(e) => setF({ ...f, notes: e.target.value })} /></Field>
       <div className="flex justify-end gap-2 mt-2"><Btn accent={accent} onClick={() => onSave(f)}><Check size={15} /> Save record</Btn></div>
     </Modal>
@@ -1823,21 +2149,37 @@ function SearchOverlay({ chickens, onSelect, onClose }) {
 /*                                  APP                                  */
 /* ===================================================================== */
 
-export default function App() {
+function GlobalStyle() {
+  return (
+    <style>{`
+      :root { --ink:#1B2E1F; --teal:#4F8F52; --teal-deep:#16241B; --aqua:#8FBF7A; --mist:#F5F1E6; --slate:#6B7561; --danger:#C8493C; }
+      * { box-sizing: border-box; }
+      ::-webkit-scrollbar { height: 8px; width: 8px; }
+      ::-webkit-scrollbar-thumb { background: rgba(11,42,44,0.18); border-radius: 4px; }
+      input[type="checkbox"] { accent-color: var(--teal); width: 15px; height: 15px; }
+      input:focus, select:focus, textarea:focus { box-shadow: 0 0 0 2px rgba(79,143,82,0.28); border-color: var(--teal); }
+    `}</style>
+  );
+}
+
+function MainApp({ userId, onLogout }) {
   const [active, setActive] = useState("dashboard");
   const [ready, setReady] = useState(0);
   const bump = () => setReady((c) => c + 1);
 
-  const [chickens, setChickens] = usePersistedArray("chickens", bump);
-  const [incubators, setIncubators] = usePersistedArray("incubators", bump);
-  const [breedingPairs, setBreedingPairs] = usePersistedArray("breedingPairs", bump);
-  const [eggLogs, setEggLogs] = usePersistedArray("eggLogs", bump);
-  const [healthRecords, setHealthRecords] = usePersistedArray("healthRecords", bump);
-  const [mortalityLog, setMortalityLog] = usePersistedArray("mortalityLog", bump);
-  const [reminders, setReminders] = usePersistedArray("reminders", bump);
-  const [feedCosts, setFeedCosts] = usePersistedArray("feedCosts", bump);
-  const [eggSales, setEggSales] = usePersistedArray("eggSales", bump);
-  const [birdSales, setBirdSales] = usePersistedArray("birdSales", bump);
+  const [pendingSaves, setPendingSaves] = useState(0);
+  const onSaveStateChange = (saving) => setPendingSaves((n) => Math.max(0, n + (saving ? 1 : -1)));
+
+  const [chickens, setChickens] = usePersistedArray("chickens", userId, bump, onSaveStateChange);
+  const [incubators, setIncubators] = usePersistedArray("incubators", userId, bump, onSaveStateChange);
+  const [breedingPairs, setBreedingPairs] = usePersistedArray("breedingPairs", userId, bump, onSaveStateChange);
+  const [eggLogs, setEggLogs] = usePersistedArray("eggLogs", userId, bump, onSaveStateChange);
+  const [healthRecords, setHealthRecords] = usePersistedArray("healthRecords", userId, bump, onSaveStateChange);
+  const [mortalityLog, setMortalityLog] = usePersistedArray("mortalityLog", userId, bump, onSaveStateChange);
+  const [reminders, setReminders] = usePersistedArray("reminders", userId, bump, onSaveStateChange);
+  const [feedCosts, setFeedCosts] = usePersistedArray("feedCosts", userId, bump, onSaveStateChange);
+  const [eggSales, setEggSales] = usePersistedArray("eggSales", userId, bump, onSaveStateChange);
+  const [birdSales, setBirdSales] = usePersistedArray("birdSales", userId, bump, onSaveStateChange);
 
   const [searchOpen, setSearchOpen] = useState(false);
   const [jumpTarget, setJumpTarget] = useState(null);
@@ -1889,14 +2231,7 @@ export default function App() {
 
   return (
     <div className="min-h-screen" style={{ background: "var(--mist)", fontFamily: "Manrope, sans-serif", color: "var(--ink)" }}>
-      <style>{`
-        :root { --ink:#1B2E1F; --teal:#4F8F52; --teal-deep:#16241B; --aqua:#8FBF7A; --mist:#F5F1E6; --slate:#6B7561; --danger:#C8493C; }
-        * { box-sizing: border-box; }
-        ::-webkit-scrollbar { height: 8px; width: 8px; }
-        ::-webkit-scrollbar-thumb { background: rgba(11,42,44,0.18); border-radius: 4px; }
-        input[type="checkbox"] { accent-color: var(--teal); width: 15px; height: 15px; }
-        input:focus, select:focus, textarea:focus { box-shadow: 0 0 0 2px rgba(79,143,82,0.28); border-color: var(--teal); }
-      `}</style>
+      <GlobalStyle />
 
       {loading ? (
         <div className="h-screen flex items-center justify-center"><Loader2 className="animate-spin" size={28} style={{ color: "var(--teal)" }} /></div>
@@ -1909,9 +2244,20 @@ export default function App() {
                 <h1 className="text-2xl font-bold leading-tight" style={{ fontFamily: "'Playfair Display', serif", color: "#E3D5B8" }}>FlockForge</h1>
                 <p className="text-[10px] font-semibold uppercase" style={{ color: "rgba(227,213,184,0.65)", letterSpacing: "0.18em" }}>Hatch · Grow · Thrive</p>
               </div>
-              <button onClick={() => setSearchOpen(true)} className="p-2 rounded-full flex-shrink-0" style={{ background: "rgba(227,213,184,0.12)" }}>
-                <Search size={18} color="#E3D5B8" />
-              </button>
+              <div className="flex flex-col items-end gap-1 flex-shrink-0">
+                <div className="flex items-center gap-1.5">
+                  <button onClick={() => setSearchOpen(true)} className="p-2 rounded-full" style={{ background: "rgba(227,213,184,0.12)" }}>
+                    <Search size={18} color="#E3D5B8" />
+                  </button>
+                  <button onClick={onLogout} title="Log out" className="p-2 rounded-full" style={{ background: "rgba(227,213,184,0.12)" }}>
+                    <LogOut size={18} color="#E3D5B8" />
+                  </button>
+                </div>
+                <div className="flex items-center gap-1 text-[9px] font-bold uppercase" style={{ color: pendingSaves > 0 ? "#E3D5B8" : "rgba(143,191,122,0.9)", letterSpacing: "0.08em" }}>
+                  <span className={"w-1.5 h-1.5 rounded-full" + (pendingSaves > 0 ? " animate-pulse" : "")} style={{ background: pendingSaves > 0 ? "#E3D5B8" : "#8FBF7A" }} />
+                  {pendingSaves > 0 ? "Saving…" : "Saved"}
+                </div>
+              </div>
             </div>
           </header>
 
@@ -1958,5 +2304,174 @@ export default function App() {
         />
       )}
     </div>
+  );
+}
+
+/* ===================================================================== */
+/*                          AUTH / ACCOUNT LAYER                        */
+/* ===================================================================== */
+
+const PERSISTED_KEYS = ["chickens", "incubators", "breedingPairs", "eggLogs", "healthRecords", "mortalityLog", "reminders", "feedCosts", "eggSales", "birdSales"];
+
+function AuthScreen() {
+  const [mode, setMode] = useState("signin");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
+  const [info, setInfo] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const switchMode = (m) => { setMode(m); setError(""); setInfo(""); };
+
+  const submit = async () => {
+    setError("");
+    setInfo("");
+    setBusy(true);
+    try {
+      if (mode === "signin") {
+        const { error } = await supabase.auth.signInWithPassword({ email, password });
+        if (error) setError(error.message);
+      } else if (mode === "signup") {
+        const { error } = await supabase.auth.signUp({ email, password });
+        if (error) setError(error.message);
+        else setInfo("Account created! If email confirmation is on, check your inbox, then log in.");
+      } else if (mode === "reset") {
+        const { error } = await supabase.auth.resetPasswordForEmail(email);
+        if (error) setError(error.message);
+        else setInfo("Password reset email sent — check your inbox.");
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="min-h-screen flex items-center justify-center px-4" style={{ background: "var(--mist)", fontFamily: "Manrope, sans-serif" }}>
+      <GlobalStyle />
+      <div className="w-full max-w-sm">
+        <div className="rounded-2xl px-5 py-4 flex items-center gap-3 mb-6" style={{ background: "linear-gradient(135deg, var(--teal-deep), #0A140C)" }}>
+          <HenAnvilLogo size={38} color="#E3D5B8" />
+          <div>
+            <h1 className="text-2xl font-bold leading-tight" style={{ fontFamily: "'Playfair Display', serif", color: "#E3D5B8" }}>FlockForge</h1>
+            <p className="text-[10px] font-semibold uppercase" style={{ color: "rgba(227,213,184,0.65)", letterSpacing: "0.18em" }}>Hatch · Grow · Thrive</p>
+          </div>
+        </div>
+
+        <div className="bg-white rounded-2xl shadow-sm p-5">
+          <h2 className="font-bold text-lg mb-4" style={{ fontFamily: "'Playfair Display', serif", color: "var(--ink)" }}>
+            {mode === "signin" ? "Log in" : mode === "signup" ? "Create an account" : "Reset your password"}
+          </h2>
+
+          <Field label="Email">
+            <TextInput type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@example.com" />
+          </Field>
+
+          {mode !== "reset" && (
+            <Field label="Password">
+              <TextInput type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="At least 6 characters" />
+            </Field>
+          )}
+
+          {error && <p className="text-sm mb-3" style={{ color: "var(--danger)" }}>{error}</p>}
+          {info && <p className="text-sm mb-3" style={{ color: "var(--teal)" }}>{info}</p>}
+
+          <Btn accent="var(--teal)" className="w-full justify-center" onClick={submit}>
+            {busy ? <Loader2 size={15} className="animate-spin" /> : mode === "signin" ? "Log in" : mode === "signup" ? "Create account" : "Send reset email"}
+          </Btn>
+
+          <div className="flex items-center justify-between mt-4 text-xs flex-wrap gap-2">
+            {mode === "signin" && (
+              <>
+                <button onClick={() => switchMode("signup")} style={{ color: "var(--teal)" }} className="underline font-semibold">Create an account</button>
+                <button onClick={() => switchMode("reset")} style={{ color: "var(--slate)" }} className="underline">Forgot password?</button>
+              </>
+            )}
+            {mode !== "signin" && (
+              <button onClick={() => switchMode("signin")} style={{ color: "var(--teal)" }} className="underline font-semibold">Back to log in</button>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function MigrationPrompt({ userId, onDone }) {
+  const [busy, setBusy] = useState(false);
+  const run = async () => {
+    setBusy(true);
+    for (const key of PERSISTED_KEYS) {
+      try {
+        const raw = localStorage.getItem(`flockforge:${key}`);
+        const arr = raw ? JSON.parse(raw) : [];
+        if (Array.isArray(arr) && arr.length) {
+          await supabase.from("user_data").upsert({ user_id: userId, key, value: arr, updated_at: new Date().toISOString() });
+        }
+      } catch (e) {}
+    }
+    window.location.reload();
+  };
+  return (
+    <Modal title="Import your existing flock?" accent="var(--teal)" onClose={() => onDone(false)}>
+      <p className="text-sm mb-4" style={{ color: "var(--ink)" }}>
+        We found flock data already saved on this device, from before you had an account. Want to bring it into your new account? This only happens once — after this, your account's data is the one that counts.
+      </p>
+      <div className="flex justify-end gap-2">
+        <Btn variant="ghost" accent="rgba(11,42,44,0.5)" onClick={() => onDone(false)}>Start fresh instead</Btn>
+        <Btn accent="var(--teal)" onClick={run} disabled={busy}>{busy ? <Loader2 size={15} className="animate-spin" /> : "Import my data"}</Btn>
+      </div>
+    </Modal>
+  );
+}
+
+export default function App() {
+  const [session, setSession] = useState(undefined);
+  const [migrationChecked, setMigrationChecked] = useState(false);
+  const [showMigration, setShowMigration] = useState(false);
+
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data }) => setSession(data.session ?? null));
+    const { data: listener } = supabase.auth.onAuthStateChange((_event, s) => setSession(s));
+    return () => listener.subscription.unsubscribe();
+  }, []);
+
+  useEffect(() => {
+    if (!session || migrationChecked) return;
+    (async () => {
+      const hasLocal = PERSISTED_KEYS.some((key) => {
+        try {
+          const raw = localStorage.getItem(`flockforge:${key}`);
+          const arr = raw ? JSON.parse(raw) : [];
+          return Array.isArray(arr) && arr.length > 0;
+        } catch (e) {
+          return false;
+        }
+      });
+      if (hasLocal) {
+        const { count } = await supabase.from("user_data").select("*", { count: "exact", head: true }).eq("user_id", session.user.id);
+        if (!count) setShowMigration(true);
+      }
+      setMigrationChecked(true);
+    })();
+  }, [session, migrationChecked]);
+
+  if (session === undefined) {
+    return (
+      <div className="min-h-screen flex items-center justify-center" style={{ background: "var(--mist)" }}>
+        <GlobalStyle />
+        <Loader2 className="animate-spin" size={28} style={{ color: "var(--teal)" }} />
+      </div>
+    );
+  }
+
+  if (!session) {
+    return <AuthScreen />;
+  }
+
+  return (
+    <>
+      <MainApp userId={session.user.id} onLogout={() => supabase.auth.signOut()} />
+      {showMigration && <MigrationPrompt userId={session.user.id} onDone={() => setShowMigration(false)} />}
+    </>
   );
 }
