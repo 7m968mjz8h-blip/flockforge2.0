@@ -111,21 +111,28 @@ function resizeImage(file, maxDim = 480) {
 
 /* --------------------------- persistence hook --------------------------- */
 
-function usePersistedArray(key, userId, onReady, onSaveStateChange) {
+function usePersistedArray(key, userId, onReady, onSaveStateChange, onLoadError) {
   const [data, setData] = useState([]);
   const loadedRef = useRef(false);
+  const loadSucceededRef = useRef(false);
   const userIdRef = useRef(userId);
 
   useEffect(() => {
     userIdRef.current = userId;
-    if (!userId) { loadedRef.current = false; return; }
+    if (!userId) { loadedRef.current = false; loadSucceededRef.current = false; return; }
     loadedRef.current = false;
+    loadSucceededRef.current = false;
     (async () => {
       try {
-        const { data: row } = await supabase.from("user_data").select("value").eq("user_id", userId).eq("key", key).maybeSingle();
+        const { data: row, error } = await supabase.from("user_data").select("value").eq("user_id", userId).eq("key", key).maybeSingle();
+        if (error) throw error;
         setData(row && Array.isArray(row.value) ? row.value : []);
+        loadSucceededRef.current = true; // only mark succeeded on clean load
       } catch (e) {
+        console.warn(`[FlockForge] Failed to load "${key}" — keeping empty, will NOT overwrite server data.`, e);
         setData([]);
+        onLoadError?.(key);
+        // loadSucceededRef stays false → save effect will not fire → server data is safe
       }
       loadedRef.current = true;
       onReady();
@@ -133,15 +140,20 @@ function usePersistedArray(key, userId, onReady, onSaveStateChange) {
   }, [userId]);
 
   useEffect(() => {
-    if (!loadedRef.current || !userIdRef.current) return;
+    // Guard: only save if both loaded AND the load actually succeeded.
+    // If the load failed, we must not save [] back and overwrite good server data.
+    if (!loadedRef.current || !loadSucceededRef.current || !userIdRef.current) return;
     onSaveStateChange?.(true);
     supabase.from("user_data").upsert({ user_id: userIdRef.current, key, value: data, updated_at: new Date().toISOString() })
       .then(() => {})
-      .catch(() => {})
+      .catch((e) => console.warn(`[FlockForge] Save failed for "${key}"`, e))
       .finally(() => onSaveStateChange?.(false));
   }, [data]);
 
-  return [data, setData];
+  // Allow forcing a save after a failed load (e.g. user adds data despite the error)
+  const forceAllowSave = () => { loadSucceededRef.current = true; };
+
+  return [data, setData, forceAllowSave];
 }
 
 /* ------------------------------ UI atoms ------------------------------- */
@@ -1048,7 +1060,7 @@ function IncubatorCard({ inc, accent, breedingPairs, chickens, onEdit, onDelete,
                     <EggShape size={21} fill="#F5F1E6" glow={egg.status === "incubating" ? glow : 0} ring={egg.status === "hatched" ? "#4F8F52" : egg.status === "removed" ? "#6B7561" : null} />
                     {egg.photo && (
                       <button onClick={() => setPhotoFor(egg.id)} className="w-7 h-7 rounded-lg overflow-hidden border flex-shrink-0" style={{ borderColor: "rgba(11,42,44,0.15)" }} title="View egg photo">
-                        <img src={egg.photo} className="w-full h-full object-contain" style={{ background: "#fff" }} />
+                        <img src={egg.photo} className="w-full h-full object-cover" />
                       </button>
                     )}
                     <div className="flex-1 min-w-0">
@@ -1184,7 +1196,7 @@ function EggPhotoForm({ initial, onSave, accent }) {
   const [photo, setPhoto] = useState(initial);
   return (
     <div>
-      <PhotoSlot value={photo} onChange={setPhoto} label="Egg photo" shape="square" fit="contain" />
+      <PhotoSlot value={photo} onChange={setPhoto} label="Egg photo" shape="square" />
       <div className="flex justify-end gap-2 mt-3">
         <Btn accent={accent} onClick={() => onSave(photo)}><Check size={15} /> Save</Btn>
       </div>
@@ -2165,21 +2177,23 @@ function GlobalStyle() {
 function MainApp({ userId, onLogout }) {
   const [active, setActive] = useState("dashboard");
   const [ready, setReady] = useState(0);
+  const [loadErrors, setLoadErrors] = useState([]);
   const bump = () => setReady((c) => c + 1);
+  const onLoadError = (key) => setLoadErrors((e) => e.includes(key) ? e : [...e, key]);
 
   const [pendingSaves, setPendingSaves] = useState(0);
   const onSaveStateChange = (saving) => setPendingSaves((n) => Math.max(0, n + (saving ? 1 : -1)));
 
-  const [chickens, setChickens] = usePersistedArray("chickens", userId, bump, onSaveStateChange);
-  const [incubators, setIncubators] = usePersistedArray("incubators", userId, bump, onSaveStateChange);
-  const [breedingPairs, setBreedingPairs] = usePersistedArray("breedingPairs", userId, bump, onSaveStateChange);
-  const [eggLogs, setEggLogs] = usePersistedArray("eggLogs", userId, bump, onSaveStateChange);
-  const [healthRecords, setHealthRecords] = usePersistedArray("healthRecords", userId, bump, onSaveStateChange);
-  const [mortalityLog, setMortalityLog] = usePersistedArray("mortalityLog", userId, bump, onSaveStateChange);
-  const [reminders, setReminders] = usePersistedArray("reminders", userId, bump, onSaveStateChange);
-  const [feedCosts, setFeedCosts] = usePersistedArray("feedCosts", userId, bump, onSaveStateChange);
-  const [eggSales, setEggSales] = usePersistedArray("eggSales", userId, bump, onSaveStateChange);
-  const [birdSales, setBirdSales] = usePersistedArray("birdSales", userId, bump, onSaveStateChange);
+  const [chickens, setChickens] = usePersistedArray("chickens", userId, bump, onSaveStateChange, onLoadError);
+  const [incubators, setIncubators] = usePersistedArray("incubators", userId, bump, onSaveStateChange, onLoadError);
+  const [breedingPairs, setBreedingPairs] = usePersistedArray("breedingPairs", userId, bump, onSaveStateChange, onLoadError);
+  const [eggLogs, setEggLogs] = usePersistedArray("eggLogs", userId, bump, onSaveStateChange, onLoadError);
+  const [healthRecords, setHealthRecords] = usePersistedArray("healthRecords", userId, bump, onSaveStateChange, onLoadError);
+  const [mortalityLog, setMortalityLog] = usePersistedArray("mortalityLog", userId, bump, onSaveStateChange, onLoadError);
+  const [reminders, setReminders] = usePersistedArray("reminders", userId, bump, onSaveStateChange, onLoadError);
+  const [feedCosts, setFeedCosts] = usePersistedArray("feedCosts", userId, bump, onSaveStateChange, onLoadError);
+  const [eggSales, setEggSales] = usePersistedArray("eggSales", userId, bump, onSaveStateChange, onLoadError);
+  const [birdSales, setBirdSales] = usePersistedArray("birdSales", userId, bump, onSaveStateChange, onLoadError);
 
   const [searchOpen, setSearchOpen] = useState(false);
   const [jumpTarget, setJumpTarget] = useState(null);
@@ -2233,6 +2247,11 @@ function MainApp({ userId, onLogout }) {
     <div className="min-h-screen" style={{ background: "var(--mist)", fontFamily: "Manrope, sans-serif", color: "var(--ink)" }}>
       <GlobalStyle />
 
+      {loadErrors.length > 0 && (
+        <div className="mx-4 mt-3 rounded-xl px-4 py-3 text-sm font-semibold" style={{ background: "#FEF2F2", color: "#991B1B", border: "1px solid #FECACA" }}>
+          ⚠️ Some data failed to load from the server ({loadErrors.join(", ")}). Your existing data was NOT overwritten — try refreshing. If this keeps happening, contact support.
+        </div>
+      )}
       {loading ? (
         <div className="h-screen flex items-center justify-center"><Loader2 className="animate-spin" size={28} style={{ color: "var(--teal)" }} /></div>
       ) : (
