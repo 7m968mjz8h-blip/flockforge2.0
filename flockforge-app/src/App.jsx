@@ -9,11 +9,11 @@ import { supabase } from "./supabaseClient.js";
 /* ----------------------------- constants ----------------------------- */
 
 const TABS = [
-  { id: "dashboard", label: "Dashboard", icon: Gauge, accent: "#8FBF7A" },
-  { id: "flock", label: "Flock", icon: Bird, accent: "#4F8F52" },
-  { id: "incubator", label: "Incubator", icon: EggIcon, accent: "#3D7A4A" },
+  { id: "dashboard", label: "Dashboard", icon: Gauge, accent: "var(--aqua)" },
+  { id: "flock", label: "Flock", icon: Bird, accent: "var(--teal)" },
+  { id: "incubator", label: "Incubator", icon: EggIcon, accent: "var(--teal)" },
   { id: "breeding", label: "Breeding", icon: Heart, accent: "#6B9C5E" },
-  { id: "egglog", label: "Egg Log", icon: CalendarDays, accent: "#3F9A6B" },
+  { id: "egglog", label: "Egg Log", icon: CalendarDays, accent: "var(--teal)" },
   { id: "economics", label: "Economics", icon: Wallet, accent: "#8C6D3F" },
   { id: "health", label: "Health", icon: Stethoscope, accent: "#3F6B4A" },
   { id: "lineage", label: "Lineage", icon: GitBranch, accent: "#2E4F33" },
@@ -60,7 +60,10 @@ function fmtDate(d) {
   if (isNaN(dt)) return "—";
   return dt.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 }
-function todayStr() { return new Date().toISOString().slice(0, 10); }
+function todayStr() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
 function daysBetween(a, b) {
   const A = new Date(a + "T00:00:00"), B = new Date(b + "T00:00:00");
   return Math.round((B - A) / 86400000);
@@ -70,21 +73,26 @@ function ageString(hatchDate) {
   const days = daysBetween(hatchDate, todayStr());
   if (days < 0) return "—";
   if (days < 14) return `${days} day${days === 1 ? "" : "s"} old`;
-  if (days < 60) return `${Math.floor(days / 7)} wks old`;
+  if (days < 175) return `${Math.floor(days / 7)} wks old`; // weeks up to 25 weeks
   const months = Math.floor(days / 30.4);
   if (months < 18) return `${months} mo old`;
   return `${(days / 365).toFixed(1)} yrs old`;
 }
+function ageWeeks(hatchDate) {
+  if (!hatchDate) return null;
+  const days = daysBetween(hatchDate, todayStr());
+  return days >= 0 ? Math.floor(days / 7) : null;
+}
 function eggColorHex(name) { return EGG_COLORS.find((c) => c.name === name)?.hex || "#CFEDE7"; }
-function sexBorderColor(sex) { return sex === "rooster" ? "#3F6B4A" : sex === "hen" ? "#8FBF7A" : "#6B7561"; }
-function sexBadgeColor(sex) { return sex === "rooster" ? "#3F6B4A" : sex === "hen" ? "#4F8F52" : "#6B7561"; }
+function sexBorderColor(sex) { return sex === "rooster" ? "#3F6B4A" : sex === "hen" ? "var(--aqua)" : "#6B7561"; }
+function sexBadgeColor(sex) { return sex === "rooster" ? "#3F6B4A" : sex === "hen" ? "var(--teal)" : "#6B7561"; }
 
 function advanceDate(dateStr, recurrence) {
   const d = new Date(dateStr + "T00:00:00");
   if (recurrence === "daily") d.setDate(d.getDate() + 1);
   else if (recurrence === "weekly") d.setDate(d.getDate() + 7);
   else if (recurrence === "monthly") d.setMonth(d.getMonth() + 1);
-  return d.toISOString().slice(0, 10);
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
 }
 
 function resizeImage(file, maxDim = 480) {
@@ -107,6 +115,144 @@ function resizeImage(file, maxDim = 480) {
     reader.onerror = reject;
     reader.readAsDataURL(file);
   });
+}
+
+/* ----------------------------- theme system ----------------------------- */
+
+const PRESET_THEMES = [
+  { id: "forest",   name: "Forest Green", emoji: "🌲", dark: false,
+    vars: { ink: "#1B2E1F", teal: "#4F8F52", tealDeep: "#16241B", aqua: "#8FBF7A", mist: "#F5F1E6", slate: "#6B7561", danger: "#C8493C", card: "#FFFFFF" } },
+  { id: "dark",     name: "Dark Mode",    emoji: "🌙", dark: true,
+    vars: { ink: "#D4E8D4", teal: "#5AA85D", tealDeep: "#0A120A", aqua: "#7BC47E", mist: "#111811", slate: "#7A9A7A", danger: "#E06060", card: "#1A221A" } },
+  { id: "ocean",    name: "Ocean",        emoji: "🌊", dark: false,
+    vars: { ink: "#0D2137", teal: "#2B7BB9", tealDeep: "#0A1929", aqua: "#5BA3D4", mist: "#EEF5FA", slate: "#4A7A9B", danger: "#C84B3C", card: "#FFFFFF" } },
+  { id: "autumn",   name: "Autumn",       emoji: "🍂", dark: false,
+    vars: { ink: "#2C1A08", teal: "#B85C20", tealDeep: "#2C1A08", aqua: "#E09050", mist: "#FDF4E8", slate: "#7A5030", danger: "#C84B3C", card: "#FFFFFF" } },
+  { id: "lavender", name: "Lavender",     emoji: "💜", dark: false,
+    vars: { ink: "#1E1840", teal: "#6B5BAE", tealDeep: "#1A1535", aqua: "#9B8DD0", mist: "#F5F0FF", slate: "#6A6090", danger: "#C84B3C", card: "#FFFFFF" } },
+  { id: "sunrise",  name: "Sunrise",      emoji: "🌸", dark: false,
+    vars: { ink: "#2E0F1A", teal: "#B83860", tealDeep: "#2A0A18", aqua: "#E07090", mist: "#FFF0F4", slate: "#8E5068", danger: "#C84B3C", card: "#FFFFFF" } },
+];
+
+function hexToRgb(hex) {
+  const h = hex.replace("#", "");
+  return [parseInt(h.slice(0,2),16), parseInt(h.slice(2,4),16), parseInt(h.slice(4,6),16)];
+}
+function rgbToHex(r, g, b) {
+  return "#" + [r,g,b].map(v => Math.round(Math.min(255, Math.max(0, v))).toString(16).padStart(2,"0")).join("");
+}
+function darkenHex(hex, f) { const [r,g,b] = hexToRgb(hex); return rgbToHex(r*f, g*f, b*f); }
+function lightenHex(hex, f) { const [r,g,b] = hexToRgb(hex); return rgbToHex(r+(255-r)*f, g+(255-g)*f, b+(255-b)*f); }
+function isDarkColor(hex) { const [r,g,b] = hexToRgb(hex); return (0.299*r + 0.587*g + 0.114*b) < 128; }
+
+function buildCustomTheme(primary, background) {
+  const dark = isDarkColor(background);
+  return {
+    id: "custom", name: "Custom", emoji: "🎨", dark,
+    vars: {
+      ink: dark ? lightenHex(primary, 0.6) : darkenHex(primary, 0.3),
+      teal: primary,
+      tealDeep: darkenHex(primary, 0.28),
+      aqua: lightenHex(primary, 0.35),
+      mist: background,
+      slate: dark ? lightenHex(primary, 0.25) : darkenHex(primary, 0.55),
+      danger: dark ? "#E06060" : "#C8493C",
+      card: dark ? darkenHex(background, 0.7) : "#FFFFFF",
+    },
+  };
+}
+
+function applyThemeVars(vars, dark) {
+  const s = document.documentElement.style;
+  s.setProperty("--ink", vars.ink);
+  s.setProperty("--teal", vars.teal);
+  s.setProperty("--teal-deep", vars.tealDeep);
+  s.setProperty("--aqua", vars.aqua);
+  s.setProperty("--mist", vars.mist);
+  s.setProperty("--slate", vars.slate);
+  s.setProperty("--danger", vars.danger);
+  s.setProperty("--card", vars.card || (dark ? "#1A221A" : "#FFFFFF"));
+  if (dark) document.documentElement.setAttribute("data-theme", "dark");
+  else document.documentElement.removeAttribute("data-theme");
+}
+
+function useTheme() {
+  const [theme, setThemeState] = useState(() => {
+    try {
+      const raw = localStorage.getItem("flockforge:theme");
+      if (raw) return JSON.parse(raw);
+    } catch (e) {}
+    return PRESET_THEMES[0];
+  });
+  const setTheme = (t) => {
+    setThemeState(t);
+    try { localStorage.setItem("flockforge:theme", JSON.stringify(t)); } catch (e) {}
+    applyThemeVars(t.vars, t.dark);
+  };
+  useEffect(() => { applyThemeVars(theme.vars, theme.dark); }, []);
+  return [theme, setTheme];
+}
+
+/* ----------------------- theme panel component -------------------------- */
+
+function ThemePanel({ theme, onThemeChange }) {
+  const [showCustom, setShowCustom] = useState(theme?.id === "custom");
+  const [customPrimary, setCustomPrimary] = useState(theme?.id === "custom" ? theme.vars.teal : "var(--teal)");
+  const [customBg, setCustomBg] = useState(theme?.id === "custom" ? theme.vars.mist : "#F5F1E6");
+
+  const applyCustom = () => {
+    onThemeChange(buildCustomTheme(customPrimary, customBg));
+  };
+
+  return (
+    <div className="bg-white rounded-2xl p-4 shadow-sm mt-4" style={{ background: "var(--card)" }}>
+      <h3 className="font-bold mb-1" style={{ fontFamily: "'Playfair Display', serif", color: "var(--ink)" }}>Theme</h3>
+      <p className="text-sm mb-3" style={{ color: "var(--slate)" }}>Pick a color scheme or build your own.</p>
+      <div className="flex flex-wrap gap-2 mb-3">
+        {PRESET_THEMES.map((t) => (
+          <button
+            key={t.id}
+            onClick={() => { setShowCustom(false); onThemeChange(t); }}
+            className="flex flex-col items-center gap-1 p-2 rounded-xl transition-all"
+            style={{ background: theme?.id === t.id && !showCustom ? "rgba(0,0,0,0.06)" : "transparent", border: theme?.id === t.id && !showCustom ? "2px solid var(--teal)" : "2px solid transparent" }}
+          >
+            <div className="flex -space-x-1">
+              <div className="w-5 h-5 rounded-full border border-white/50" style={{ background: t.vars.teal }} />
+              <div className="w-5 h-5 rounded-full border border-white/50" style={{ background: t.vars.mist }} />
+            </div>
+            <span className="text-[10px] font-bold" style={{ color: "var(--slate)" }}>{t.emoji}</span>
+          </button>
+        ))}
+        <button
+          onClick={() => setShowCustom(true)}
+          className="flex flex-col items-center gap-1 p-2 rounded-xl transition-all"
+          style={{ background: showCustom ? "rgba(0,0,0,0.06)" : "transparent", border: showCustom ? "2px solid var(--teal)" : "2px solid transparent" }}
+        >
+          <div className="w-5 h-5 rounded-full flex items-center justify-center text-[11px]" style={{ background: "linear-gradient(135deg, #FF6B6B, #4ECDC4, #45B7D1, #96CEB4)" }} />
+          <span className="text-[10px] font-bold" style={{ color: "var(--slate)" }}>✏️</span>
+        </button>
+      </div>
+
+      {!showCustom && theme && (
+        <p className="text-xs font-semibold" style={{ color: "var(--teal)" }}>{theme.emoji} {theme.name}</p>
+      )}
+
+      {showCustom && (
+        <div className="space-y-3 pt-1 border-t" style={{ borderColor: "rgba(0,0,0,0.08)" }}>
+          <p className="text-xs font-bold uppercase pt-2" style={{ color: "var(--teal)" }}>Custom colors</p>
+          <div className="flex items-center gap-3">
+            <label className="text-sm font-semibold flex-1" style={{ color: "var(--ink)" }}>Primary accent</label>
+            <input type="color" value={customPrimary} onChange={(e) => setCustomPrimary(e.target.value)} className="w-10 h-8 rounded-lg cursor-pointer border-0" />
+          </div>
+          <div className="flex items-center gap-3">
+            <label className="text-sm font-semibold flex-1" style={{ color: "var(--ink)" }}>Background</label>
+            <input type="color" value={customBg} onChange={(e) => setCustomBg(e.target.value)} className="w-10 h-8 rounded-lg cursor-pointer border-0" />
+          </div>
+          <Btn accent="var(--teal)" onClick={applyCustom}><Check size={14} /> Apply</Btn>
+        </div>
+      )}
+    </div>
+  );
 }
 
 /* --------------------------- persistence hook --------------------------- */
@@ -259,7 +405,7 @@ function DateInput({ value, onChange }) {
   );
 }
 
-function Btn({ children, onClick, accent = "#4F8F52", variant = "solid", type = "button", className = "", title }) {
+function Btn({ children, onClick, accent = "var(--teal)", variant = "solid", type = "button", className = "", title }) {
   const base = "inline-flex items-center gap-1.5 px-4 py-2 text-sm font-bold transition-transform active:scale-95 " + (variant === "solid" ? "rounded-full" : "rounded-xl");
   const style = variant === "solid" ? { background: accent, color: "#fff" } : variant === "ghost" ? { background: "transparent", color: accent, border: `1.5px solid ${accent}` } : { background: "transparent", color: accent };
   return (
@@ -273,7 +419,7 @@ function IconBtn({ icon: Icon, onClick, accent = "var(--ink)", title }) {
   return <button onClick={onClick} title={title} className="p-1.5 rounded-lg transition-colors" style={{ color: accent, opacity: 0.8 }}><Icon size={16} /></button>;
 }
 
-function Modal({ title, accent = "#4F8F52", onClose, children, wide }) {
+function Modal({ title, accent = "var(--teal)", onClose, children, wide }) {
   return (
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4" style={{ background: "rgba(11,42,44,0.45)" }} onClick={(e) => e.target === e.currentTarget && onClose()}>
       <div className={"w-full bg-white rounded-t-3xl sm:rounded-3xl overflow-hidden flex flex-col " + (wide ? "sm:max-w-xl" : "sm:max-w-md")} style={{ maxHeight: "92vh" }}>
@@ -323,7 +469,7 @@ function Badge({ children, color, bg }) {
   return <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold" style={{ color: color || "#fff", background: bg }}>{children}</span>;
 }
 
-function ToggleSwitch({ checked, onChange, label, accent = "#4F8F52" }) {
+function ToggleSwitch({ checked, onChange, label, accent = "var(--teal)" }) {
   return (
     <button
       type="button"
@@ -499,7 +645,7 @@ function DashCard({ icon: Icon, label, value, sub, accent, onClick, cornerAction
   );
 }
 
-function DashboardTab({ chickens, incubators, eggLogs, setEggLogs, reminders, onNavigate, onExport, onImport }) {
+function DashboardTab({ chickens, incubators, eggLogs, setEggLogs, reminders, onNavigate, onExport, onImport, theme, onThemeChange }) {
   const fileRef = useRef(null);
   const [pendingImport, setPendingImport] = useState(null);
   const [quickLogOpen, setQuickLogOpen] = useState(false);
@@ -510,14 +656,14 @@ function DashboardTab({ chickens, incubators, eggLogs, setEggLogs, reminders, on
   const unsexed = active.filter((c) => c.sex === "unknown" || !c.sex).length;
   const today = todayStr();
   const eggsToday = eggLogs.filter((l) => l.date === today).reduce((s, l) => s + (l.count || 0), 0);
-  const last7 = Array.from({ length: 7 }, (_, i) => { const d = new Date(); d.setDate(d.getDate() - i); return d.toISOString().slice(0, 10); });
+  const last7 = Array.from({ length: 7 }, (_, i) => { const d = new Date(); d.setDate(d.getDate() - i); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; });
   const eggsWeek = eggLogs.filter((l) => last7.includes(l.date)).reduce((s, l) => s + (l.count || 0), 0);
   const incubatingCount = incubators.flatMap((i) => i.eggs).filter((e) => e.status === "incubating").length;
   const nearestHatch = incubators.map((inc) => {
     if (!inc.eggs.some((e) => e.status === "incubating")) return null;
     const hd = new Date(inc.startDate + "T00:00:00");
     hd.setDate(hd.getDate() + (inc.incubationDays || 21));
-    const dateStr = hd.toISOString().slice(0, 10);
+    const dateStr = `${hd.getFullYear()}-${String(hd.getMonth()+1).padStart(2,'0')}-${String(hd.getDate()).padStart(2,'0')}`;
     return { name: inc.name, daysLeft: daysBetween(today, dateStr) };
   }).filter(Boolean).sort((a, b) => a.daysLeft - b.daysLeft);
   const openReminders = reminders.filter((r) => !r.done);
@@ -528,22 +674,22 @@ function DashboardTab({ chickens, incubators, eggLogs, setEggLogs, reminders, on
   return (
     <div>
       <div className="grid gap-3 mb-4" style={{ gridTemplateColumns: "repeat(auto-fit,minmax(150px,1fr))" }}>
-        <DashCard icon={Bird} label="Active birds" value={active.length} sub={`${hens} hens · ${roosters} roosters${unsexed ? ` · ${unsexed} unsexed` : ""}`} accent="#4F8F52" onClick={() => onNavigate("flock")} />
+        <DashCard icon={Bird} label="Active birds" value={active.length} sub={`${hens} hens · ${roosters} roosters${unsexed ? ` · ${unsexed} unsexed` : ""}`} accent="var(--teal)" onClick={() => onNavigate("flock")} />
         <DashCard
-          icon={EggIcon} label="Eggs today" value={eggsToday} sub={`${eggsWeek} this week`} accent="#3F9A6B" onClick={() => onNavigate("egglog")}
+          icon={EggIcon} label="Eggs today" value={eggsToday} sub={`${eggsWeek} this week`} accent="var(--teal)" onClick={() => onNavigate("egglog")}
           cornerAction={
             <button
               onClick={(e) => { e.stopPropagation(); setQuickLogOpen(true); }}
               className="absolute top-2.5 right-2.5 w-7 h-7 rounded-full flex items-center justify-center shadow-sm"
-              style={{ background: "#3F9A6B" }}
+              style={{ background: "var(--teal)" }}
               title="Log today's eggs"
             >
               <Plus size={14} color="#fff" />
             </button>
           }
         />
-        <DashCard icon={Gauge} label="Incubating" value={incubatingCount} sub={nearestHatch[0] ? (nearestHatch[0].daysLeft <= 0 ? "Any day now" : `Hatch in ${nearestHatch[0].daysLeft}d`) : "None running"} accent="#3D7A4A" onClick={() => onNavigate("incubator")} />
-        <DashCard icon={BellRing} label="Reminders" value={openReminders.length} sub={overdue ? `${overdue} overdue` : "All caught up"} accent={overdue ? "#C8893A" : "#4F8F52"} onClick={() => onNavigate("reminders")} />
+        <DashCard icon={Gauge} label="Incubating" value={incubatingCount} sub={nearestHatch[0] ? (nearestHatch[0].daysLeft <= 0 ? "Any day now" : `Hatch in ${nearestHatch[0].daysLeft}d`) : "None running"} accent="var(--teal)" onClick={() => onNavigate("incubator")} />
+        <DashCard icon={BellRing} label="Reminders" value={openReminders.length} sub={overdue ? `${overdue} overdue` : "All caught up"} accent={overdue ? "#C8893A" : "var(--teal)"} onClick={() => onNavigate("reminders")} />
       </div>
 
       <div className="grid gap-4 sm:grid-cols-2">
@@ -591,11 +737,11 @@ function DashboardTab({ chickens, incubators, eggLogs, setEggLogs, reminders, on
         </div>
       )}
 
-      <div className="bg-white rounded-2xl p-4 shadow-sm mt-4">
+      <div className="bg-white rounded-2xl p-4 shadow-sm mt-4" style={{ background: "var(--card)" }}>
         <h3 className="font-bold mb-1" style={{ fontFamily: "'Playfair Display', serif" }}>Backup & restore</h3>
         <p className="text-sm mb-3" style={{ color: "var(--slate)" }}>Your data lives in this artifact. Export a backup now and then so you always have a copy.</p>
         <div className="flex gap-2 flex-wrap">
-          <Btn accent="#4F8F52" onClick={onExport}><Download size={15} /> Export backup</Btn>
+          <Btn accent="var(--teal)" onClick={onExport}><Download size={15} /> Export backup</Btn>
           <Btn accent="#8C6D3F" variant="ghost" onClick={() => fileRef.current?.click()}><Upload size={15} /> Restore backup</Btn>
         </div>
         <input
@@ -619,9 +765,11 @@ function DashboardTab({ chickens, incubators, eggLogs, setEggLogs, reminders, on
           onCancel={() => setPendingImport(null)}
         />
       )}
+
+      <ThemePanel theme={theme} onThemeChange={onThemeChange} />
       {quickLogOpen && (
         <DayLogModal
-          date={today} accent="#3F9A6B" pens={pens} chickens={chickens}
+          date={today} accent="var(--teal)" pens={pens} chickens={chickens}
           entries={eggLogs.filter((l) => l.date === today)}
           onClose={() => setQuickLogOpen(false)}
           onAdd={(entry) => setEggLogs((arr) => [...arr, { ...entry, id: uid(), date: today }])}
@@ -637,13 +785,14 @@ function DashboardTab({ chickens, incubators, eggLogs, setEggLogs, reminders, on
 /* ===================================================================== */
 
 function FlockTab({ chickens, setChickens, healthRecords, jumpToChickenId, onJumpHandled }) {
-  const accent = "#4F8F52";
+  const accent = "var(--teal)";
   const [modal, setModal] = useState(null);
   const [detail, setDetail] = useState(null);
   const [confirmDelete, setConfirmDelete] = useState(null);
   const [showInactive, setShowInactive] = useState(false);
   const [filterPen, setFilterPen] = useState("all");
   const [filterSex, setFilterSex] = useState("all");
+  const [sortBy, setSortBy] = useState("default");
   const pens = useMemo(() => [...new Set(chickens.map((c) => c.pen).filter(Boolean))], [chickens]);
 
   useEffect(() => {
@@ -653,7 +802,12 @@ function FlockTab({ chickens, setChickens, healthRecords, jumpToChickenId, onJum
     onJumpHandled?.();
   }, [jumpToChickenId]);
 
-  const visible = chickens.filter((c) => (showInactive || (c.status !== "deceased" && c.status !== "sold")) && (filterPen === "all" || c.pen === filterPen) && (filterSex === "all" || c.sex === filterSex || (filterSex === "unknown" && !c.sex)));
+  const visible = useMemo(() => {
+    const filtered = chickens.filter((c) => (showInactive || (c.status !== "deceased" && c.status !== "sold")) && (filterPen === "all" || c.pen === filterPen) && (filterSex === "all" || c.sex === filterSex || (filterSex === "unknown" && !c.sex)));
+    if (sortBy === "youngest") return filtered.slice().sort((a, b) => (b.hatchDate || "0000").localeCompare(a.hatchDate || "0000"));
+    if (sortBy === "oldest") return filtered.slice().sort((a, b) => (a.hatchDate || "9999").localeCompare(b.hatchDate || "9999"));
+    return filtered;
+  }, [chickens, showInactive, filterPen, filterSex, sortBy]);
 
   const save = (data) => {
     if (data.id) setChickens((cs) => cs.map((c) => (c.id === data.id ? data : c)));
@@ -666,8 +820,23 @@ function FlockTab({ chickens, setChickens, healthRecords, jumpToChickenId, onJum
     setDetail((d) => (d && d.id === id ? { ...d, laying: !d.laying } : d));
   };
 
+  const activeChickens = useMemo(() => chickens.filter((c) => c.status !== "deceased" && c.status !== "sold"), [chickens]);
+  const flockHens = activeChickens.filter((c) => c.sex === "hen").length;
+  const flockRoosters = activeChickens.filter((c) => c.sex === "rooster").length;
+  const flockUnsexed = activeChickens.filter((c) => !c.sex || c.sex === "unknown").length;
+  const flockLaying = activeChickens.filter((c) => c.sex === "hen" && c.laying).length;
+
   return (
-    <div>
+    <div className="relative">
+      {/* Flock stats row */}
+      {activeChickens.length > 0 && (
+        <div className="flex flex-wrap gap-1.5 mb-3">
+          {flockHens > 0 && <span className="px-2.5 py-1 rounded-full text-xs font-bold" style={{ background: "var(--teal)22", color: "var(--teal)" }}>🐔 {flockHens} hen{flockHens !== 1 ? "s" : ""}</span>}
+          {flockRoosters > 0 && <span className="px-2.5 py-1 rounded-full text-xs font-bold" style={{ background: "var(--teal)22", color: "var(--teal)" }}>🐓 {flockRoosters} rooster{flockRoosters !== 1 ? "s" : ""}</span>}
+          {flockUnsexed > 0 && <span className="px-2.5 py-1 rounded-full text-xs font-bold" style={{ background: "rgba(107,117,97,0.12)", color: "var(--slate)" }}>❓ {flockUnsexed} unsexed</span>}
+          {flockLaying > 0 && <span className="px-2.5 py-1 rounded-full text-xs font-bold" style={{ background: "var(--aqua)33", color: "var(--teal)" }}>🥚 {flockLaying} laying</span>}
+        </div>
+      )}
       <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
         <div className="flex flex-wrap gap-2">
           <Select value={filterPen} onChange={(e) => setFilterPen(e.target.value)} className="!w-auto text-sm">
@@ -679,6 +848,11 @@ function FlockTab({ chickens, setChickens, healthRecords, jumpToChickenId, onJum
             <option value="hen">Hens only</option>
             <option value="rooster">Roosters only</option>
             <option value="unknown">Not yet sexed</option>
+          </Select>
+          <Select value={sortBy} onChange={(e) => setSortBy(e.target.value)} className="!w-auto text-sm">
+            <option value="default">Sort: as added</option>
+            <option value="youngest">Youngest first</option>
+            <option value="oldest">Oldest first</option>
           </Select>
           <label className="flex items-center gap-1.5 text-sm px-2 select-none">
             <input type="checkbox" checked={showInactive} onChange={(e) => setShowInactive(e.target.checked)} /> Show deceased & sold
@@ -706,11 +880,14 @@ function FlockTab({ chickens, setChickens, healthRecords, jumpToChickenId, onJum
                 {c.origin && <p className="text-xs italic truncate" style={{ color: "var(--slate)" }}>From: {c.origin}</p>}
                 <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
                   <Badge bg={sexBadgeColor(c.sex)}>{c.sex || "unknown"}</Badge>
-                  {c.pen && <Badge bg="#3D7A4A">{c.pen}</Badge>}
+                  {c.pen && <Badge bg="var(--teal)">{c.pen}</Badge>}
                   {c.sex === "hen" && (
                     <button onClick={(e) => { e.stopPropagation(); toggleLaying(c.id); }} title="Tap to toggle laying status">
-                      <Badge bg={c.laying ? "#4F8F52" : "#6B756133"} color={c.laying ? "#fff" : "#6B7561"}>{c.laying ? "Laying" : "Not laying"}</Badge>
+                      <Badge bg={c.laying ? "var(--teal)" : "#6B756133"} color={c.laying ? "#fff" : "#6B7561"}>{c.laying ? "Laying" : "Not laying"}</Badge>
                     </button>
+                  )}
+                  {c.sex === "hen" && !c.laying && c.status !== "deceased" && c.status !== "sold" && (() => { const w = ageWeeks(c.hatchDate); return w != null && w >= 16 && w <= 24; })() && (
+                    <Badge bg="#C8893A33" color="#A8691A">🥚 POL soon</Badge>
                   )}
                 </div>
               </div>
@@ -728,6 +905,16 @@ function FlockTab({ chickens, setChickens, healthRecords, jumpToChickenId, onJum
       {confirmDelete && (
         <ConfirmDialog message="Remove this bird from FlockForge? This cannot be undone." onConfirm={() => remove(confirmDelete)} onCancel={() => setConfirmDelete(null)} />
       )}
+
+      {/* Floating "+" add bird button */}
+      <button
+        onClick={() => setModal({ data: {} })}
+        className="fixed z-40 flex items-center justify-center rounded-full shadow-lg"
+        style={{ bottom: 28, right: 22, width: 52, height: 52, background: "var(--teal)", color: "#fff" }}
+        title="Add bird"
+      >
+        <Plus size={24} />
+      </button>
     </div>
   );
 }
@@ -768,7 +955,7 @@ function ChickenDetail({ chicken: c, chickens, healthRecords, onEdit, onDelete, 
       {c.sex === "hen" && (
         <div className="mb-4 flex items-center gap-3">
           <span className="text-xs font-bold uppercase" style={{ color: "var(--teal)" }}>Laying status</span>
-          <ToggleSwitch checked={!!c.laying} onChange={onToggleLaying} label={c.laying ? "Currently laying" : "Not laying yet"} accent="#4F8F52" />
+          <ToggleSwitch checked={!!c.laying} onChange={onToggleLaying} label={c.laying ? "Currently laying" : "Not laying yet"} accent="var(--teal)" />
         </div>
       )}
       {(dam || sire) && (
@@ -896,7 +1083,7 @@ function ChickenForm({ accent, initial, chickens, onSave, onClose }) {
         )}
         {f.sex === "hen" && (
           <Field label="Laying status">
-            <ToggleSwitch checked={!!f.laying} onChange={(v) => setF({ ...f, laying: v })} label={f.laying ? "Currently laying" : "Not laying yet"} accent="#4F8F52" />
+            <ToggleSwitch checked={!!f.laying} onChange={(v) => setF({ ...f, laying: v })} label={f.laying ? "Currently laying" : "Not laying yet"} accent="var(--teal)" />
           </Field>
         )}
         <Field label="Dam (mother)">
@@ -928,7 +1115,7 @@ function ChickenForm({ accent, initial, chickens, onSave, onClose }) {
 /* ===================================================================== */
 
 function IncubatorTab({ incubators, setIncubators, chickens, setChickens, breedingPairs, setReminders }) {
-  const accent = "#3D7A4A";
+  const accent = "var(--teal)";
   const [modal, setModal] = useState(null);
   const [eggModal, setEggModal] = useState(null);
   const [hatchModal, setHatchModal] = useState(null);
@@ -946,7 +1133,7 @@ function IncubatorTab({ incubators, setIncubators, chickens, setChickens, breedi
     const add = (offset, type, title) => {
       const due = new Date(inc.startDate + "T00:00:00");
       due.setDate(due.getDate() + offset);
-      return { id: uid(), title, dueDate: due.toISOString().slice(0, 10), type, relatedIncubatorId: inc.id, done: false };
+      return { id: uid(), title, dueDate: `${due.getFullYear()}-${String(due.getMonth()+1).padStart(2,"0")}-${String(due.getDate()).padStart(2,"0")}`, type, relatedIncubatorId: inc.id, done: false };
     };
     setReminders((r) => [...r, add(7, "Candling", `Candle eggs — ${inc.name}`), add(days - 3, "Lockdown", `Lockdown: stop turning — ${inc.name}`), add(days, "Hatch day", `Expected hatch day — ${inc.name}`)]);
     alert("Added candling, lockdown, and hatch-day reminders.");
@@ -1000,6 +1187,50 @@ function IncubatorTab({ incubators, setIncubators, chickens, setChickens, breedi
   );
 }
 
+function ProgressRing({ pct, size = 46, stroke = 4, accent, label, sublabel }) {
+  const r = (size - stroke) / 2;
+  const circ = 2 * Math.PI * r;
+  const clamped = Math.max(0, Math.min(1, pct));
+  return (
+    <div className="relative flex-shrink-0" style={{ width: size, height: size }} title={sublabel}>
+      <svg width={size} height={size} className="-rotate-90">
+        <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="rgba(0,0,0,0.08)" strokeWidth={stroke} />
+        <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke={accent} strokeWidth={stroke} strokeLinecap="round"
+          strokeDasharray={circ} strokeDashoffset={circ * (1 - clamped)} style={{ transition: "stroke-dashoffset .4s" }} />
+      </svg>
+      <div className="absolute inset-0 flex items-center justify-center">
+        <span className="text-[11px] font-bold font-mono" style={{ color: accent }}>{label}</span>
+      </div>
+    </div>
+  );
+}
+
+function CandlingTimeline({ dayNow, days, accent }) {
+  const marks = [
+    { day: 7, label: "Candle", emoji: "🔦" },
+    { day: 14, label: "Candle", emoji: "🔦" },
+    { day: days - 3, label: "Lockdown", emoji: "🔒" },
+    { day: days, label: "Hatch", emoji: "🐣" },
+  ].filter((m, i, arr) => m.day > 0 && arr.findIndex((x) => x.day === m.day) === i);
+  return (
+    <div className="px-4 pb-3">
+      <div className="relative h-1.5 rounded-full" style={{ background: "rgba(0,0,0,0.08)" }}>
+        <div className="absolute inset-y-0 left-0 rounded-full" style={{ width: `${Math.min(100, (dayNow / days) * 100)}%`, background: accent, opacity: 0.75 }} />
+        {marks.map((m) => (
+          <div key={m.day} className="absolute -top-0.5 w-2.5 h-2.5 rounded-full border-2" style={{ left: `calc(${(m.day / days) * 100}% - 5px)`, background: dayNow >= m.day ? accent : "#fff", borderColor: accent }} />
+        ))}
+      </div>
+      <div className="relative h-6 mt-0.5">
+        {marks.map((m) => (
+          <span key={m.day} className="absolute text-[9px] font-bold whitespace-nowrap" style={{ left: `${(m.day / days) * 100}%`, transform: "translateX(-50%)", color: dayNow >= m.day ? accent : "var(--slate)" }}>
+            {m.emoji} d{m.day}
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function IncubatorCard({ inc, accent, breedingPairs, chickens, onEdit, onDelete, onAddEggs, onRemoveEgg, onHatchEgg, onAddToFlock, onAddReminders, onUpdateNotes, onDeleteEgg, onUpdateEgg, onUpdateEggPhoto }) {
   const [open, setOpen] = useState(true);
   const [reasonFor, setReasonFor] = useState(null);
@@ -1007,6 +1238,9 @@ function IncubatorCard({ inc, accent, breedingPairs, chickens, onEdit, onDelete,
   const [photoFor, setPhotoFor] = useState(null);
   const [editEgg, setEditEgg] = useState(null);
   const [confirmDeleteEgg, setConfirmDeleteEgg] = useState(null);
+  const [eggView, setEggView] = useState("list"); // "list" | "carton"
+  const [gridEgg, setGridEgg] = useState(null); // egg selected in carton view
+  const [celebrating, setCelebrating] = useState(null); // egg id currently celebrating
   const total = inc.eggs.length;
   const hatched = inc.eggs.filter((e) => e.status === "hatched").length;
   const removed = inc.eggs.filter((e) => e.status === "removed").length;
@@ -1014,19 +1248,42 @@ function IncubatorCard({ inc, accent, breedingPairs, chickens, onEdit, onDelete,
   const rate = total ? Math.round((hatched / total) * 100) : 0;
   const days = inc.incubationDays || 21;
   const orderedEggs = inc.eggs.slice().sort((a, b) => a.setDate.localeCompare(b.setDate));
+  const dayNow = Math.max(0, daysBetween(inc.startDate, todayStr()));
+  const daysLeft = Math.max(0, days - dayNow);
+  const cyclePct = Math.min(1, dayNow / days);
+
+  const celebrateHatch = (eggId) => {
+    setCelebrating(eggId);
+    onHatchEgg(eggId);
+    setTimeout(() => setCelebrating(null), 1200);
+  };
 
   return (
-    <div className="rounded-2xl bg-white shadow-sm overflow-hidden" style={{ borderTop: `3px solid ${accent}` }}>
+    <div className="rounded-2xl bg-white shadow-sm overflow-hidden relative" style={{ borderTop: `3px solid ${accent}` }}>
+      {celebrating && (
+        <div className="absolute inset-0 z-20 flex items-center justify-center pointer-events-none">
+          <span style={{ fontSize: 64, animation: "hatchPop 1.2s ease-out forwards" }}>🐣</span>
+        </div>
+      )}
       <div className="p-4 flex flex-wrap items-start justify-between gap-3">
         <div className="flex items-start gap-3">
+          {incubating > 0 && dayNow <= days ? (
+            <ProgressRing pct={cyclePct} accent={accent} label={`d${dayNow}`} sublabel={`Day ${dayNow} of ${days}`} />
+          ) : inc.photo ? null : null}
           {inc.photo && (
             <img src={inc.photo} className="w-14 h-14 rounded-xl object-contain flex-shrink-0 border" style={{ background: "#fff", borderColor: "rgba(11,42,44,0.12)" }} alt="Carton" />
           )}
           <div>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
               <button onClick={() => setOpen(!open)}><ChevronDown size={16} className={open ? "" : "-rotate-90"} style={{ transition: "transform .15s" }} /></button>
               <h3 className="font-bold text-lg" style={{ fontFamily: "'Playfair Display', serif" }}>{inc.name}</h3>
               <Badge bg={accent}>{inc.species || "Chicken"}</Badge>
+              {incubating > 0 && daysLeft > 0 && (
+                <Badge bg="#C8893A" color="#fff">🐣 {daysLeft} day{daysLeft === 1 ? "" : "s"} to hatch</Badge>
+              )}
+              {incubating > 0 && daysLeft === 0 && (
+                <Badge bg="var(--danger)" color="#fff">🐣 Hatch day!</Badge>
+              )}
             </div>
             <p className="text-xs ml-6" style={{ color: "var(--slate)" }}>Started {fmtDate(inc.startDate)} · {days}-day cycle</p>
           </div>
@@ -1038,18 +1295,46 @@ function IncubatorCard({ inc, accent, breedingPairs, chickens, onEdit, onDelete,
         </div>
       </div>
 
+      {incubating > 0 && dayNow <= days && <CandlingTimeline dayNow={dayNow} days={days} accent={accent} />}
+
       <div className="flex gap-2 px-4 pb-3 flex-wrap">
         <StatPill label="Set" value={total} accent={accent} />
-        <StatPill label="Incubating" value={incubating} accent="#8FBF7A" />
-        <StatPill label="Hatched" value={hatched} accent="#4F8F52" />
+        <StatPill label="Incubating" value={incubating} accent="var(--aqua)" />
+        <StatPill label="Hatched" value={hatched} accent="var(--teal)" />
         <StatPill label="Removed" value={removed} accent="#6B7561" />
         <StatPill label="Hatch rate" value={total ? rate + "%" : "—"} accent={accent} />
       </div>
 
       {open && (
         <div className="px-4 pb-4">
-          <Btn accent={accent} variant="ghost" className="mb-3" onClick={onAddEggs}><Plus size={14} /> Add eggs</Btn>
-          {inc.eggs.length === 0 ? <p className="text-sm" style={{ color: "var(--slate)" }}>No eggs set yet.</p> : (
+          <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
+            <Btn accent={accent} variant="ghost" onClick={onAddEggs}><Plus size={14} /> Add eggs</Btn>
+            {inc.eggs.length > 0 && (
+              <div className="flex gap-1">
+                <Btn accent={accent} variant={eggView === "list" ? "solid" : "ghost"} className="!px-2.5 !py-1 !text-xs" onClick={() => setEggView("list")}>List</Btn>
+                <Btn accent={accent} variant={eggView === "carton" ? "solid" : "ghost"} className="!px-2.5 !py-1 !text-xs" onClick={() => setEggView("carton")}>Carton</Btn>
+              </div>
+            )}
+          </div>
+          {inc.eggs.length === 0 ? <p className="text-sm" style={{ color: "var(--slate)" }}>No eggs set yet.</p> : eggView === "carton" ? (
+            <div className="rounded-2xl p-3" style={{ background: "rgba(139,105,60,0.10)", border: "1px solid rgba(139,105,60,0.18)" }}>
+              <div className="grid gap-2" style={{ gridTemplateColumns: "repeat(6,1fr)" }}>
+                {orderedEggs.map((egg, idx) => {
+                  const dayCount = egg.status === "incubating" ? daysBetween(egg.setDate, todayStr()) : null;
+                  const glow = dayCount != null ? Math.max(0.14, Math.min(1, dayCount / days)) : 0;
+                  return (
+                    <button key={egg.id} onClick={() => setGridEgg(egg)} className="flex flex-col items-center gap-0.5 py-1.5 rounded-xl hover:bg-black/5 transition-colors relative">
+                      <EggShape size={30} fill="#F5F1E6" glow={egg.status === "incubating" ? glow : 0} ring={egg.status === "hatched" ? "var(--teal)" : egg.status === "removed" ? "#6B7561" : null} />
+                      <span className="text-[9px] font-mono font-bold" style={{ color: "var(--slate)" }}>{idx + 1}</span>
+                      {egg.status === "hatched" && <span className="absolute top-0 right-1 text-[10px]">🐣</span>}
+                      {egg.status === "removed" && <span className="absolute top-0 right-1 text-[10px]">✕</span>}
+                      {egg.notes && <span className="absolute top-0 left-1 w-1.5 h-1.5 rounded-full" style={{ background: accent }} />}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          ) : (
             <div className="space-y-1.5">
               {orderedEggs.map((egg, idx) => {
                 const dayCount = egg.status === "incubating" ? daysBetween(egg.setDate, todayStr()) : null;
@@ -1057,7 +1342,7 @@ function IncubatorCard({ inc, accent, breedingPairs, chickens, onEdit, onDelete,
                 return (
                   <div key={egg.id} className="flex items-center gap-2.5 py-1.5 px-2 rounded-lg flex-wrap" style={{ background: "rgba(14,124,134,0.05)" }}>
                     <span className="text-xs font-mono font-bold w-5 text-right flex-shrink-0" style={{ color: "var(--slate)" }}>{idx + 1}</span>
-                    <EggShape size={21} fill="#F5F1E6" glow={egg.status === "incubating" ? glow : 0} ring={egg.status === "hatched" ? "#4F8F52" : egg.status === "removed" ? "#6B7561" : null} />
+                    <EggShape size={21} fill="#F5F1E6" glow={egg.status === "incubating" ? glow : 0} ring={egg.status === "hatched" ? "var(--teal)" : egg.status === "removed" ? "#6B7561" : null} />
                     {egg.photo && (
                       <button onClick={() => setPhotoFor(egg.id)} className="w-7 h-7 rounded-lg overflow-hidden border flex-shrink-0" style={{ borderColor: "rgba(11,42,44,0.15)" }} title="View egg photo">
                         <img src={egg.photo} className="w-full h-full object-cover" />
@@ -1081,12 +1366,12 @@ function IncubatorCard({ inc, accent, breedingPairs, chickens, onEdit, onDelete,
                     </div>
                     {egg.status === "incubating" && (
                       <div className="flex gap-1">
-                        <Btn accent="#4F8F52" className="!px-2 !py-1 !text-xs" onClick={() => onHatchEgg(egg.id)}>Hatched</Btn>
+                        <Btn accent="var(--teal)" className="!px-2 !py-1 !text-xs" onClick={() => celebrateHatch(egg.id)}>Hatched</Btn>
                         <Btn accent="#6B7561" variant="ghost" className="!px-2 !py-1 !text-xs" onClick={() => setReasonFor(egg.id)}>Remove</Btn>
                       </div>
                     )}
                     {egg.status === "hatched" && !egg.addedToFlock && <Btn accent={accent} className="!px-2 !py-1 !text-xs" onClick={() => onAddToFlock(egg)}><Link2 size={12} /> Add to flock</Btn>}
-                    {egg.addedToFlock && <Badge bg="#4F8F52">in flock</Badge>}
+                    {egg.addedToFlock && <Badge bg="var(--teal)">in flock</Badge>}
                   </div>
                 );
               })}
@@ -1094,6 +1379,34 @@ function IncubatorCard({ inc, accent, breedingPairs, chickens, onEdit, onDelete,
           )}
         </div>
       )}
+
+      {gridEgg && (() => {
+        const egg = inc.eggs.find((e) => e.id === gridEgg.id);
+        if (!egg) return null;
+        const dayCount = egg.status === "incubating" ? daysBetween(egg.setDate, todayStr()) : null;
+        const eggIdx = orderedEggs.findIndex((e) => e.id === egg.id);
+        return (
+          <Modal title={`Egg ${eggIdx + 1} — ${egg.breed || "Unmarked breed"}`} accent={accent} onClose={() => setGridEgg(null)}>
+            <p className="text-sm font-mono mb-1" style={{ color: "var(--slate)" }}>
+              Set {fmtDate(egg.setDate)}
+              {egg.status === "incubating" && ` · day ${dayCount} of ${days}`}
+              {egg.status === "removed" && ` · removed (${egg.removedReason})`}
+              {egg.status === "hatched" && ` · hatched ${fmtDate(egg.hatchedDate)}`}
+            </p>
+            {egg.notes && <p className="text-sm italic mb-2" style={{ color: accent }}>"{egg.notes}"</p>}
+            {egg.photo && <img src={egg.photo} className="w-20 h-20 rounded-xl object-cover mb-2 border" style={{ borderColor: "rgba(11,42,44,0.12)" }} />}
+            <div className="flex flex-wrap gap-2 mt-3">
+              {egg.status === "incubating" && <Btn accent="var(--teal)" className="!px-3 !py-1.5 !text-xs" onClick={() => { celebrateHatch(egg.id); setGridEgg(null); }}>🐣 Hatched</Btn>}
+              {egg.status === "incubating" && <Btn accent="#6B7561" variant="ghost" className="!px-3 !py-1.5 !text-xs" onClick={() => { setReasonFor(egg.id); setGridEgg(null); }}>Remove</Btn>}
+              {egg.status === "hatched" && !egg.addedToFlock && <Btn accent={accent} className="!px-3 !py-1.5 !text-xs" onClick={() => { onAddToFlock(egg); setGridEgg(null); }}><Link2 size={12} /> Add to flock</Btn>}
+              <Btn accent={accent} variant="ghost" className="!px-3 !py-1.5 !text-xs" onClick={() => { setNoteFor(egg.id); setGridEgg(null); }}><StickyNote size={12} /> {egg.notes ? "Edit note" : "Add note"}</Btn>
+              <Btn accent={accent} variant="ghost" className="!px-3 !py-1.5 !text-xs" onClick={() => { setPhotoFor(egg.id); setGridEgg(null); }}><Camera size={12} /> Photo</Btn>
+              <Btn accent={accent} variant="ghost" className="!px-3 !py-1.5 !text-xs" onClick={() => { setEditEgg(egg); setGridEgg(null); }}><Pencil size={12} /> Edit</Btn>
+              <Btn accent="var(--danger)" variant="ghost" className="!px-3 !py-1.5 !text-xs" onClick={() => { setConfirmDeleteEgg(egg.id); setGridEgg(null); }}><Trash2 size={12} /> Delete</Btn>
+            </div>
+          </Modal>
+        );
+      })()}
 
       {reasonFor && (
         <Modal title="Why was this egg removed?" accent="#6B7561" onClose={() => setReasonFor(null)}>
@@ -1298,7 +1611,7 @@ function BreedingTab({ breedingPairs, setBreedingPairs, chickens }) {
                   </div>
                   <Heart size={16} style={{ color: accent }} className="rotate-12" />
                   <div className="text-center">
-                    <div className="w-14 h-14 rounded-full overflow-hidden border-2 mx-auto" style={{ borderColor: "#8FBF7A" }}>
+                    <div className="w-14 h-14 rounded-full overflow-hidden border-2 mx-auto" style={{ borderColor: "var(--aqua)" }}>
                       {hen?.photo ? <img src={hen.photo} className="w-full h-full object-cover" /> : <div className="w-full h-full flex items-center justify-center"><Bird size={18} /></div>}
                     </div>
                     <p className="text-xs font-bold mt-1">{hen?.name || "?"}</p>
@@ -1363,11 +1676,12 @@ function PairForm({ initial, hens, roosters, onSave, accent }) {
 /* ===================================================================== */
 
 function EggLogTab({ eggLogs, setEggLogs, chickens }) {
-  const accent = "#3F9A6B";
+  const accent = "var(--teal)";
   const [section, setSection] = useState("calendar");
   const [monthOffset, setMonthOffset] = useState(0);
   const [pen, setPen] = useState("all");
   const [dayModal, setDayModal] = useState(null);
+  const [graphView, setGraphView] = useState("daily");
   const pens = useMemo(() => [...new Set(chickens.map((c) => c.pen).filter(Boolean))], [chickens]);
   const hens = useMemo(() => chickens.filter((c) => c.sex === "hen" && c.status !== "deceased" && c.status !== "sold"), [chickens]);
 
@@ -1396,11 +1710,31 @@ function EggLogTab({ eggLogs, setEggLogs, chickens }) {
     return b.daysSince - a.daysSince;
   });
 
+  // Graph data
+  const graphData = useMemo(() => {
+    if (graphView === "daily") {
+      return Array.from({ length: daysInMonth }, (_, i) => ({
+        label: String(i + 1),
+        value: countFor(i + 1),
+      }));
+    } else {
+      const weeks = [];
+      for (let d = 1; d <= daysInMonth; d += 7) {
+        const end = Math.min(d + 6, daysInMonth);
+        const total = Array.from({ length: end - d + 1 }, (_, i) => countFor(d + i)).reduce((a, b) => a + b, 0);
+        weeks.push({ label: `${d}-${end}`, value: total });
+      }
+      return weeks;
+    }
+  }, [eggLogs, monthOffset, pen, graphView]);
+  const graphMax = Math.max(1, ...graphData.map((d) => d.value));
+
   return (
     <div>
       <div className="flex gap-2 mb-4">
         <Btn variant={section === "calendar" ? "solid" : "ghost"} accent={accent} onClick={() => setSection("calendar")}>Calendar</Btn>
         <Btn variant={section === "byHen" ? "solid" : "ghost"} accent={accent} onClick={() => setSection("byHen")}>By Hen</Btn>
+        <Btn variant={section === "graph" ? "solid" : "ghost"} accent={accent} onClick={() => setSection("graph")}>Graph</Btn>
       </div>
 
       {section === "calendar" && (
@@ -1466,6 +1800,56 @@ function EggLogTab({ eggLogs, setEggLogs, chickens }) {
             );
           })}
         </div>
+      )}
+
+      {section === "graph" && (
+        <>
+          <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
+            <div className="flex items-center gap-2">
+              <IconBtn icon={ChevronLeft} onClick={() => setMonthOffset((m) => m - 1)} />
+              <h3 className="font-bold text-lg" style={{ fontFamily: "'Playfair Display', serif" }}>{monthLabel}</h3>
+              <IconBtn icon={ChevronRight} onClick={() => setMonthOffset((m) => m + 1)} />
+            </div>
+            <div className="flex gap-1.5">
+              <Btn variant={graphView === "daily" ? "solid" : "ghost"} accent={accent} className="!px-3 !py-1.5 !text-xs" onClick={() => setGraphView("daily")}>Daily</Btn>
+              <Btn variant={graphView === "weekly" ? "solid" : "ghost"} accent={accent} className="!px-3 !py-1.5 !text-xs" onClick={() => setGraphView("weekly")}>Weekly</Btn>
+            </div>
+          </div>
+
+          <div className="bg-white rounded-2xl p-4 shadow-sm" style={{ background: "var(--card)" }}>
+            {monthTotal === 0 ? (
+              <p className="text-sm text-center py-8" style={{ color: "var(--slate)" }}>No eggs logged for {monthLabel}.</p>
+            ) : (
+              <>
+                <div className="flex items-end gap-1" style={{ height: 140 }}>
+                  {graphData.map((bar, i) => (
+                    <div key={i} className="flex flex-col items-center flex-1 gap-0.5 h-full justify-end">
+                      <span className="text-[9px] font-mono font-bold" style={{ color: bar.value > 0 ? "var(--teal)" : "transparent" }}>{bar.value > 0 ? bar.value : ""}</span>
+                      <div
+                        className="w-full rounded-t-md transition-all"
+                        style={{
+                          height: `${Math.max(2, (bar.value / graphMax) * 110)}px`,
+                          background: bar.value > 0 ? "var(--teal)" : "rgba(0,0,0,0.06)",
+                          opacity: bar.value > 0 ? 0.85 + (bar.value / graphMax) * 0.15 : 1,
+                        }}
+                      />
+                    </div>
+                  ))}
+                </div>
+                <div className="flex gap-1 mt-1">
+                  {graphData.map((bar, i) => (
+                    <div key={i} className="flex-1 text-center">
+                      <span className="text-[8px] font-mono" style={{ color: "var(--slate)" }}>{graphView === "weekly" ? bar.label.split("-")[0] : bar.label}</span>
+                    </div>
+                  ))}
+                </div>
+                <div className="flex gap-3 mt-3 pt-2 border-t flex-wrap" style={{ borderColor: "rgba(0,0,0,0.07)" }}>
+                  <span className="text-xs" style={{ color: "var(--slate)" }}><span className="font-bold" style={{ color: "var(--teal)" }}>{monthTotal}</span> total · <span className="font-bold" style={{ color: "var(--teal)" }}>{(monthTotal / daysInMonth).toFixed(1)}</span> daily avg · best day <span className="font-bold" style={{ color: "var(--teal)" }}>{graphMax}</span></span>
+                </div>
+              </>
+            )}
+          </div>
+        </>
       )}
 
       {dayModal && (
@@ -1598,8 +1982,8 @@ function EconomicsTab({ feedCosts, setFeedCosts, eggSales, setEggSales, birdSale
     <div>
       <div className="grid gap-3 mb-4" style={{ gridTemplateColumns: "repeat(auto-fit,minmax(140px,1fr))" }}>
         <StatPill label="Total spent" value={`$${totalSpent.toFixed(2)}`} accent="#C8493C" />
-        <StatPill label="Total earned" value={`$${totalEarned.toFixed(2)}`} accent="#4F8F52" />
-        <StatPill label="Net" value={`${net >= 0 ? "+$" : "-$"}${Math.abs(net).toFixed(2)}`} accent={net >= 0 ? "#4F8F52" : "#C8493C"} />
+        <StatPill label="Total earned" value={`$${totalEarned.toFixed(2)}`} accent="var(--teal)" />
+        <StatPill label="Net" value={`${net >= 0 ? "+$" : "-$"}${Math.abs(net).toFixed(2)}`} accent={net >= 0 ? "var(--teal)" : "#C8493C"} />
         <StatPill label="Cost / dozen" value={costPerDozen ? `$${costPerDozen}` : "—"} accent={accent} />
       </div>
 
@@ -1992,7 +2376,7 @@ function RemindersTab({ reminders, setReminders }) {
             const overdue = !r.done && r.dueDate < todayStr();
             const isToday = r.dueDate === todayStr();
             const flashing = flashingId === r.id;
-            const badgeColor = (r.done || flashing) ? "#4F8F52" : overdue ? "var(--danger)" : isToday ? accent : "#6B7561";
+            const badgeColor = (r.done || flashing) ? "var(--teal)" : overdue ? "var(--danger)" : isToday ? accent : "#6B7561";
             return (
               <div key={r.id} className="rounded-xl p-3 bg-white shadow-sm flex items-center gap-3" style={{ opacity: r.done ? 0.55 : 1, transition: "opacity .25s" }}>
                 <button
@@ -2009,7 +2393,7 @@ function RemindersTab({ reminders, setReminders }) {
                     {r.recurrence && r.recurrence !== "none" && <span className="inline-flex items-center gap-0.5"><Repeat size={11} /> {r.recurrence}</span>}
                   </p>
                   {r.lastCompletedDate && (
-                    <p className="text-xs mt-0.5" style={{ color: "#4F8F52" }}>✓ Last done {fmtDate(r.lastCompletedDate)}</p>
+                    <p className="text-xs mt-0.5" style={{ color: "var(--teal)" }}>✓ Last done {fmtDate(r.lastCompletedDate)}</p>
                   )}
                 </div>
                 <IconBtn icon={Trash2} accent="var(--danger)" onClick={() => remove(r.id)} />
@@ -2122,14 +2506,19 @@ function SearchOverlay({ chickens, onSelect, onClose }) {
   const [q, setQ] = useState("");
   const query = q.trim().toLowerCase();
   const results = query
-    ? chickens.filter((c) => (c.name || "").toLowerCase().includes(query) || (c.breed || "").toLowerCase().includes(query) || (c.bandNumber || "").toLowerCase().includes(query)).slice(0, 20)
+    ? chickens.filter((c) =>
+        (c.name || "").toLowerCase().includes(query) ||
+        (c.breed || "").toLowerCase().includes(query) ||
+        (c.bandNumber || "").toLowerCase().includes(query) ||
+        (c.pen || "").toLowerCase().includes(query)
+      ).slice(0, 20)
     : [];
 
   return (
     <div className="fixed inset-0 z-50 flex flex-col" style={{ background: "var(--mist)" }}>
       <div className="flex items-center gap-2 p-4 flex-shrink-0" style={{ background: "linear-gradient(135deg, var(--teal-deep), #0A140C)" }}>
         <Search size={18} color="#E3D5B8" />
-        <input autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search by name, breed, or band number..." className="flex-1 bg-transparent outline-none text-base" style={{ color: "#E3D5B8" }} />
+        <input autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search by name, breed, band, or pen..." className="flex-1 bg-transparent outline-none text-base" style={{ color: "#E3D5B8" }} />
         <button onClick={onClose}><X size={20} color="#E3D5B8" /></button>
       </div>
       <div className="flex-1 overflow-y-auto p-4">
@@ -2140,13 +2529,15 @@ function SearchOverlay({ chickens, onSelect, onClose }) {
         ) : (
           <div className="space-y-2">
             {results.map((c) => (
-              <button key={c.id} onClick={() => onSelect(c.id)} className="w-full flex items-center gap-3 bg-white rounded-2xl p-3 shadow-sm text-left">
+              <button key={c.id} onClick={() => onSelect(c.id)} className="w-full flex items-center gap-3 bg-white rounded-2xl p-3 shadow-sm text-left" style={{ background: "var(--card)" }}>
                 <div className="w-10 h-10 rounded-full overflow-hidden border flex-shrink-0" style={{ borderColor: sexBorderColor(c.sex) }}>
                   {c.photo ? <img src={c.photo} className="w-full h-full object-cover" /> : <div className="w-full h-full flex items-center justify-center"><Bird size={16} /></div>}
                 </div>
                 <div className="min-w-0">
                   <p className="font-bold text-sm">{c.name || "Unnamed"}</p>
-                  <p className="text-xs" style={{ color: "var(--slate)" }}>{c.breed || "Unknown breed"}{c.bandNumber ? ` · #${c.bandNumber}` : ""}</p>
+                  <p className="text-xs" style={{ color: "var(--slate)" }}>
+                    {c.breed || "Unknown breed"}{c.bandNumber ? ` · #${c.bandNumber}` : ""}{c.pen ? ` · ${c.pen}` : ""}
+                  </p>
                 </div>
               </button>
             ))}
@@ -2164,13 +2555,17 @@ function SearchOverlay({ chickens, onSelect, onClose }) {
 function GlobalStyle() {
   return (
     <style>{`
-      :root { --ink:#1B2E1F; --teal:#4F8F52; --teal-deep:#16241B; --aqua:#8FBF7A; --mist:#F5F1E6; --slate:#6B7561; --danger:#C8493C; }
-      * { box-sizing: border-box; }
-      ::-webkit-scrollbar { height: 8px; width: 8px; }
-      ::-webkit-scrollbar-thumb { background: rgba(11,42,44,0.18); border-radius: 4px; }
-      input[type="checkbox"] { accent-color: var(--teal); width: 15px; height: 15px; }
-      input:focus, select:focus, textarea:focus { box-shadow: 0 0 0 2px rgba(79,143,82,0.28); border-color: var(--teal); }
-    `}</style>
+        :root { --ink:#1B2E1F; --teal:#4F8F52; --teal-deep:#16241B; --aqua:#8FBF7A; --mist:#F5F1E6; --slate:#6B7561; --danger:#C8493C; --card:#FFFFFF; }
+        * { box-sizing: border-box; }
+        ::-webkit-scrollbar { height: 8px; width: 8px; }
+        ::-webkit-scrollbar-thumb { background: rgba(11,42,44,0.18); border-radius: 4px; }
+        input[type="checkbox"] { accent-color: var(--teal); width: 15px; height: 15px; }
+        input:focus, select:focus, textarea:focus { box-shadow: 0 0 0 2px rgba(79,143,82,0.28); border-color: var(--teal); }
+        [data-theme="dark"] .bg-white { background-color: var(--card) !important; }
+        [data-theme="dark"] input, [data-theme="dark"] select, [data-theme="dark"] textarea { background-color: color-mix(in srgb, var(--card) 80%, var(--teal) 20%) !important; color: var(--ink) !important; border-color: rgba(255,255,255,0.12) !important; }
+        [data-theme="dark"] .shadow-sm { box-shadow: 0 1px 4px rgba(0,0,0,0.5) !important; }
+        @keyframes hatchPop { 0% { transform: scale(0.2); opacity: 0; } 30% { transform: scale(1.3); opacity: 1; } 55% { transform: scale(1); } 100% { transform: scale(1) translateY(-24px); opacity: 0; } }
+      `}</style>
   );
 }
 
@@ -2180,6 +2575,7 @@ function MainApp({ userId, onLogout }) {
   const [loadErrors, setLoadErrors] = useState([]);
   const bump = () => setReady((c) => c + 1);
   const onLoadError = (key) => setLoadErrors((e) => e.includes(key) ? e : [...e, key]);
+  const [theme, setTheme] = useTheme();
 
   const [pendingSaves, setPendingSaves] = useState(0);
   const onSaveStateChange = (saving) => setPendingSaves((n) => Math.max(0, n + (saving ? 1 : -1)));
@@ -2273,7 +2669,7 @@ function MainApp({ userId, onLogout }) {
                   </button>
                 </div>
                 <div className="flex items-center gap-1 text-[9px] font-bold uppercase" style={{ color: pendingSaves > 0 ? "#E3D5B8" : "rgba(143,191,122,0.9)", letterSpacing: "0.08em" }}>
-                  <span className={"w-1.5 h-1.5 rounded-full" + (pendingSaves > 0 ? " animate-pulse" : "")} style={{ background: pendingSaves > 0 ? "#E3D5B8" : "#8FBF7A" }} />
+                  <span className={"w-1.5 h-1.5 rounded-full" + (pendingSaves > 0 ? " animate-pulse" : "")} style={{ background: pendingSaves > 0 ? "#E3D5B8" : "var(--aqua)" }} />
                   {pendingSaves > 0 ? "Saving…" : "Saved"}
                 </div>
               </div>
@@ -2302,7 +2698,7 @@ function MainApp({ userId, onLogout }) {
           </div>
 
           <main className="px-4 sm:px-6 pb-12 pt-4">
-            {active === "dashboard" && <DashboardTab chickens={chickens} incubators={incubators} eggLogs={eggLogs} setEggLogs={setEggLogs} reminders={reminders} onNavigate={setActive} onExport={exportData} onImport={importData} />}
+            {active === "dashboard" && <DashboardTab chickens={chickens} incubators={incubators} eggLogs={eggLogs} setEggLogs={setEggLogs} reminders={reminders} onNavigate={setActive} onExport={exportData} onImport={importData} theme={theme} onThemeChange={setTheme} />}
             {active === "flock" && <FlockTab chickens={chickens} setChickens={setChickens} healthRecords={healthRecords} jumpToChickenId={jumpTarget} onJumpHandled={() => setJumpTarget(null)} />}
             {active === "incubator" && <IncubatorTab incubators={incubators} setIncubators={setIncubators} chickens={chickens} setChickens={setChickens} breedingPairs={breedingPairs} setReminders={setReminders} />}
             {active === "breeding" && <BreedingTab breedingPairs={breedingPairs} setBreedingPairs={setBreedingPairs} chickens={chickens} />}
