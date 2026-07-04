@@ -433,13 +433,42 @@ function Modal({ title, accent = "var(--teal)", onClose, children, wide }) {
   );
 }
 
+function CrackingEgg({ size = 56 }) {
+  return (
+    <div style={{ width: size, height: size }}>
+      <svg width={size} height={size} viewBox="0 0 60 72" style={{ animation: "ffEggWobble 1.3s ease-in-out infinite", transformOrigin: "center bottom" }}>
+        <path d="M30 4 C14 4 6 30 6 44 C6 60 17 68 30 68 C43 68 54 60 54 44 C54 30 46 4 30 4 Z" fill="var(--mist)" stroke="var(--slate)" strokeWidth="2" />
+        <path d="M14 40 L22 36 L26 42 L33 37 L38 43 L46 39" fill="none" stroke="var(--teal)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+      <style>{`@keyframes ffEggWobble { 0%,100% { transform: rotate(-5deg); } 50% { transform: rotate(5deg); } }`}</style>
+    </div>
+  );
+}
+
+function HenLineArt({ size = 64, color }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 100 100" fill="none" stroke={color} strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M28 74 Q22 52 38 44 Q34 30 48 30 Q52 20 60 26 Q56 32 58 36 Q74 38 76 56 Q84 58 82 66 L74 66 Q72 74 62 74 Z" />
+      <circle cx="55" cy="34" r="1.8" fill={color} stroke="none" />
+      <path d="M62 30 Q66 28 66 24 M60 28 Q64 24 62 20 M64 32 Q69 32 70 28" />
+      <path d="M76 56 Q80 54 82 50" />
+      <path d="M40 74 L38 84 M52 74 L52 84 M46 84 L34 84 M58 84 L48 84" />
+    </svg>
+  );
+}
+
 function EmptyState({ icon: Icon, title, subtitle, accent, onAction, actionLabel }) {
+  const useHenArt = Icon === Bird;
   return (
     <div className="flex flex-col items-center text-center py-14 px-6 rounded-2xl bg-white shadow-sm">
-      <div className="w-14 h-14 rounded-2xl flex items-center justify-center mb-3" style={{ background: accent + "1A" }}>
-        <Icon size={26} style={{ color: accent }} />
-      </div>
-      <p className="font-bold text-base" style={{ fontFamily: "'Playfair Display', serif" }}>{title}</p>
+      {useHenArt ? (
+        <HenLineArt size={64} color={accent} />
+      ) : (
+        <div className="w-14 h-14 rounded-2xl flex items-center justify-center mb-3" style={{ background: accent + "1A" }}>
+          <Icon size={26} style={{ color: accent }} />
+        </div>
+      )}
+      <p className="font-bold text-base mt-3" style={{ fontFamily: "'Playfair Display', serif" }}>{title}</p>
       <p className="text-sm mt-1 max-w-xs" style={{ color: "var(--slate)" }}>{subtitle}</p>
       {onAction && (
         <Btn accent={accent} className="mt-4" onClick={onAction}><Plus size={15} /> {actionLabel || "Add"}</Btn>
@@ -629,16 +658,16 @@ function ImageCropModal({ src, shape, onCancel, onApply }) {
 /*                               DASHBOARD                                */
 /* ===================================================================== */
 
-function DashCard({ icon: Icon, label, value, sub, accent, onClick, cornerAction }) {
+function DashCard({ icon: Icon, label, value, sub, accent, onClick, cornerAction, compact }) {
   return (
     <div className="relative">
-      <button onClick={onClick} className="bg-white rounded-2xl p-4 text-left shadow-sm hover:shadow-md transition-shadow w-full">
-        <div className="w-9 h-9 rounded-xl flex items-center justify-center mb-2" style={{ background: accent + "1A" }}>
-          <Icon size={17} style={{ color: accent }} />
+      <button onClick={onClick} className={"bg-white rounded-2xl text-left shadow-sm hover:shadow-md transition-shadow w-full " + (compact ? "p-3" : "p-4")}>
+        <div className={"rounded-xl flex items-center justify-center mb-2 " + (compact ? "w-7 h-7" : "w-9 h-9")} style={{ background: accent + "1A" }}>
+          <Icon size={compact ? 14 : 17} style={{ color: accent }} />
         </div>
-        <div className="text-2xl font-bold" style={{ fontFamily: "'JetBrains Mono', monospace", color: "var(--ink)" }}>{value}</div>
-        <div className="text-xs font-bold" style={{ color: "var(--slate)" }}>{label}</div>
-        <div className="text-[11px] mt-0.5 font-semibold" style={{ color: accent }}>{sub}</div>
+        <div className={compact ? "text-lg font-bold" : "text-2xl font-bold"} style={{ fontFamily: "'JetBrains Mono', monospace", color: "var(--ink)" }}>{value}</div>
+        <div className="text-[11px] font-bold" style={{ color: "var(--slate)" }}>{label}</div>
+        <div className="text-[10px] mt-0.5 font-semibold" style={{ color: accent }}>{sub}</div>
       </button>
       {cornerAction}
     </div>
@@ -658,6 +687,14 @@ function DashboardTab({ chickens, incubators, eggLogs, setEggLogs, reminders, on
   const eggsToday = eggLogs.filter((l) => l.date === today).reduce((s, l) => s + (l.count || 0), 0);
   const last7 = Array.from({ length: 7 }, (_, i) => { const d = new Date(); d.setDate(d.getDate() - i); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; });
   const eggsWeek = eggLogs.filter((l) => last7.includes(l.date)).reduce((s, l) => s + (l.count || 0), 0);
+  const last7ForGraph = Array.from({ length: 7 }, (_, i) => { const d = new Date(); d.setDate(d.getDate() - (6 - i)); return d; });
+  const dayGraphData = last7ForGraph.map((d) => {
+    const ds = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+    return { label: d.toLocaleDateString(undefined, { weekday: "short" }).slice(0, 3), count: eggLogs.filter((l) => l.date === ds).reduce((s, l) => s + (l.count || 0), 0), isToday: ds === today };
+  });
+  const prev7 = Array.from({ length: 7 }, (_, i) => { const d = new Date(); d.setDate(d.getDate() - (i + 7)); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; });
+  const eggsPrevWeek = eggLogs.filter((l) => prev7.includes(l.date)).reduce((s, l) => s + (l.count || 0), 0);
+  const weekTrendPct = eggsPrevWeek > 0 ? Math.round(((eggsWeek - eggsPrevWeek) / eggsPrevWeek) * 100) : null;
   const incubatingCount = incubators.flatMap((i) => i.eggs).filter((e) => e.status === "incubating").length;
   const nearestHatch = incubators.map((inc) => {
     if (!inc.eggs.some((e) => e.status === "incubating")) return null;
@@ -673,10 +710,38 @@ function DashboardTab({ chickens, incubators, eggLogs, setEggLogs, reminders, on
 
   return (
     <div>
+      <div
+        className="rounded-2xl p-4 mb-4 shadow-sm"
+        style={{ background: "linear-gradient(160deg, var(--teal-deep, #16241B), #24382a)" }}
+      >
+        <div className="flex items-baseline justify-between mb-1">
+          <span className="text-xs font-bold uppercase" style={{ color: "var(--aqua)", letterSpacing: "0.1em" }}>Eggs this week</span>
+          <span className="text-xs font-semibold" style={{ color: "rgba(255,255,255,0.5)", fontFamily: "'JetBrains Mono', monospace" }}>7-day</span>
+        </div>
+        <div className="flex items-end gap-3 mb-4">
+          <span className="font-bold leading-none" style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 42, color: "#fff" }}>{eggsWeek}</span>
+          {weekTrendPct !== null && (
+            <span className="text-sm mb-1 font-semibold" style={{ color: "var(--aqua)" }}>{weekTrendPct >= 0 ? "▲" : "▼"} {Math.abs(weekTrendPct)}% vs last week</span>
+          )}
+        </div>
+        <div className="flex items-end justify-between gap-2" style={{ height: 80 }}>
+          {dayGraphData.map((x) => {
+            const max = Math.max(1, ...dayGraphData.map((d) => d.count));
+            return (
+              <button key={x.label} onClick={() => onNavigate("egglog")} className="flex-1 flex flex-col items-center gap-1.5">
+                <span className="text-[10px] font-bold" style={{ fontFamily: "'JetBrains Mono', monospace", color: "rgba(255,255,255,0.75)" }}>{x.count}</span>
+                <div className="w-full rounded-t-md transition-all" style={{ height: `${Math.max(4, (x.count / max) * 54)}px`, background: x.isToday ? "var(--aqua)" : "rgba(143,191,122,0.4)" }} />
+                <span className="text-[10px]" style={{ color: "rgba(255,255,255,0.55)" }}>{x.label}</span>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
       <div className="grid gap-3 mb-4" style={{ gridTemplateColumns: "repeat(auto-fit,minmax(150px,1fr))" }}>
-        <DashCard icon={Bird} label="Active birds" value={active.length} sub={`${hens} hens · ${roosters} roosters${unsexed ? ` · ${unsexed} unsexed` : ""}`} accent="var(--teal)" onClick={() => onNavigate("flock")} />
+        <DashCard icon={Bird} label="Active birds" value={active.length} sub={`${hens} hens · ${roosters} roosters${unsexed ? ` · ${unsexed} unsexed` : ""}`} accent="var(--teal)" onClick={() => onNavigate("flock")} compact />
         <DashCard
-          icon={EggIcon} label="Eggs today" value={eggsToday} sub={`${eggsWeek} this week`} accent="var(--teal)" onClick={() => onNavigate("egglog")}
+          icon={EggIcon} label="Eggs today" value={eggsToday} sub="Log today's count" accent="var(--teal)" onClick={() => onNavigate("egglog")} compact
           cornerAction={
             <button
               onClick={(e) => { e.stopPropagation(); setQuickLogOpen(true); }}
@@ -688,8 +753,8 @@ function DashboardTab({ chickens, incubators, eggLogs, setEggLogs, reminders, on
             </button>
           }
         />
-        <DashCard icon={Gauge} label="Incubating" value={incubatingCount} sub={nearestHatch[0] ? (nearestHatch[0].daysLeft <= 0 ? "Any day now" : `Hatch in ${nearestHatch[0].daysLeft}d`) : "None running"} accent="var(--teal)" onClick={() => onNavigate("incubator")} />
-        <DashCard icon={BellRing} label="Reminders" value={openReminders.length} sub={overdue ? `${overdue} overdue` : "All caught up"} accent={overdue ? "#C8893A" : "var(--teal)"} onClick={() => onNavigate("reminders")} />
+        <DashCard icon={Gauge} label="Incubating" value={incubatingCount} sub={nearestHatch[0] ? (nearestHatch[0].daysLeft <= 0 ? "Any day now" : `Hatch in ${nearestHatch[0].daysLeft}d`) : "None running"} accent="var(--teal)" onClick={() => onNavigate("incubator")} compact />
+        <DashCard icon={BellRing} label="Reminders" value={openReminders.length} sub={overdue ? `${overdue} overdue` : "All caught up"} accent={overdue ? "#C8893A" : "var(--teal)"} onClick={() => onNavigate("reminders")} compact />
       </div>
 
       <div className="grid gap-4 sm:grid-cols-2">
@@ -864,35 +929,40 @@ function FlockTab({ chickens, setChickens, healthRecords, jumpToChickenId, onJum
       {visible.length === 0 ? (
         <EmptyState icon={Bird} accent={accent} title="No birds yet" subtitle="Add your first chicken to start tracking the flock." onAction={() => setModal({ data: {} })} actionLabel="Add bird" />
       ) : (
-        <div className="grid gap-3" style={{ gridTemplateColumns: "repeat(auto-fill,minmax(220px,1fr))" }}>
-          {visible.map((c) => (
-            <div key={c.id} onClick={() => setDetail(c)} className="rounded-2xl p-3.5 cursor-pointer bg-white shadow-sm hover:shadow-md transition-shadow flex gap-3" style={{ opacity: (c.status === "deceased" || c.status === "sold") ? 0.55 : 1 }}>
-              <div className="w-14 h-14 flex items-center justify-center overflow-hidden flex-shrink-0 border-2" style={{ borderRadius: "50% 50% 48% 48% / 62% 62% 40% 40%", borderColor: sexBorderColor(c.sex), background: "#fff" }}>
-                {c.photo ? <img src={c.photo} className="w-full h-full object-cover" /> : <Bird size={20} style={{ color: sexBorderColor(c.sex) }} />}
-              </div>
-              <div className="min-w-0">
-                <div className="flex items-center gap-1.5 flex-wrap">
+        <div className="grid gap-3" style={{ gridTemplateColumns: "repeat(auto-fill,minmax(200px,1fr))" }}>
+          {visible.map((c) => {
+            const ring = sexBorderColor(c.sex);
+            return (
+              <div key={c.id} onClick={() => setDetail(c)} className="rounded-2xl overflow-hidden cursor-pointer bg-white shadow-sm hover:shadow-md transition-shadow" style={{ opacity: (c.status === "deceased" || c.status === "sold") ? 0.55 : 1 }}>
+                <div className="h-24 flex items-end justify-center relative" style={{ background: `linear-gradient(160deg, color-mix(in srgb, ${ring} 13%, transparent), color-mix(in srgb, ${ring} 26%, transparent))` }}>
+                  <div className="w-16 h-16 flex items-center justify-center overflow-hidden flex-shrink-0 border-2 mb-2.5" style={{ borderRadius: "50% 50% 48% 48% / 62% 62% 40% 40%", borderColor: ring, background: "#fff" }}>
+                    {c.photo ? <img src={c.photo} className="w-full h-full object-cover" /> : <Bird size={24} style={{ color: ring }} />}
+                  </div>
+                  <div className="absolute top-2 right-2 flex flex-col items-end gap-1">
+                    {c.status === "deceased" && <Badge bg="#6B756133" color="#6B7561">deceased</Badge>}
+                    {c.status === "sold" && <Badge bg="#8C6D3F33" color="#8C6D3F">sold</Badge>}
+                  </div>
+                </div>
+                <div className="p-3 pt-2.5 min-w-0">
                   <p className="font-bold truncate" style={{ fontFamily: "'Playfair Display', serif" }}>{c.name || "Unnamed"}</p>
-                  {c.status === "deceased" && <Badge bg="#6B756133" color="#6B7561">deceased</Badge>}
-                  {c.status === "sold" && <Badge bg="#8C6D3F33" color="#8C6D3F">sold</Badge>}
-                </div>
-                <p className="text-xs" style={{ color: "var(--slate)" }}>{c.breed || "Unknown breed"} · {ageString(c.hatchDate)}</p>
-                {c.origin && <p className="text-xs italic truncate" style={{ color: "var(--slate)" }}>From: {c.origin}</p>}
-                <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
-                  <Badge bg={sexBadgeColor(c.sex)}>{c.sex || "unknown"}</Badge>
-                  {c.pen && <Badge bg="var(--teal)">{c.pen}</Badge>}
-                  {c.sex === "hen" && (
-                    <button onClick={(e) => { e.stopPropagation(); toggleLaying(c.id); }} title="Tap to toggle laying status">
-                      <Badge bg={c.laying ? "var(--teal)" : "#6B756133"} color={c.laying ? "#fff" : "#6B7561"}>{c.laying ? "Laying" : "Not laying"}</Badge>
-                    </button>
-                  )}
-                  {c.sex === "hen" && !c.laying && c.status !== "deceased" && c.status !== "sold" && (() => { const w = ageWeeks(c.hatchDate); return w != null && w >= 16 && w <= 24; })() && (
-                    <Badge bg="#C8893A33" color="#A8691A">🥚 POL soon</Badge>
-                  )}
+                  <p className="text-xs" style={{ color: "var(--slate)" }}>{c.breed || "Unknown breed"} · {ageString(c.hatchDate)}</p>
+                  {c.origin && <p className="text-xs italic truncate" style={{ color: "var(--slate)" }}>From: {c.origin}</p>}
+                  <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
+                    <Badge bg={sexBadgeColor(c.sex)}>{c.sex || "unknown"}</Badge>
+                    {c.pen && <Badge bg="var(--teal)">{c.pen}</Badge>}
+                    {c.sex === "hen" && (
+                      <button onClick={(e) => { e.stopPropagation(); toggleLaying(c.id); }} title="Tap to toggle laying status">
+                        <Badge bg={c.laying ? "var(--teal)" : "#6B756133"} color={c.laying ? "#fff" : "#6B7561"}>{c.laying ? "Laying" : "Not laying"}</Badge>
+                      </button>
+                    )}
+                    {c.sex === "hen" && !c.laying && c.status !== "deceased" && c.status !== "sold" && (() => { const w = ageWeeks(c.hatchDate); return w != null && w >= 16 && w <= 24; })() && (
+                      <Badge bg="#C8893A33" color="#A8691A">🥚 POL soon</Badge>
+                    )}
+                  </div>
                 </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
 
@@ -946,6 +1016,12 @@ function ChickenDetail({ chicken: c, chickens, healthRecords, onEdit, onDelete, 
           {c.sex === "hen" && <p><span className="font-bold" style={{ color: "var(--teal)" }}>Egg size:</span> {c.eggSize || "—"}</p>}
         </div>
       </div>
+      {c.hatchedFromPhoto && (
+        <div className="mb-4">
+          <p className="text-xs font-bold uppercase mb-1" style={{ color: "var(--teal)" }}>Hatched from this egg</p>
+          <img src={c.hatchedFromPhoto} className="w-20 h-20 object-contain rounded-xl border" style={{ background: "#fff", borderColor: "rgba(11,42,44,0.12)" }} />
+        </div>
+      )}
       {c.eggPhoto && (
         <div className="mb-4">
           <p className="text-xs font-bold uppercase mb-1" style={{ color: "var(--teal)" }}>Egg sample</p>
@@ -1120,6 +1196,7 @@ function IncubatorTab({ incubators, setIncubators, chickens, setChickens, breedi
   const [eggModal, setEggModal] = useState(null);
   const [hatchModal, setHatchModal] = useState(null);
   const [confirmDelete, setConfirmDelete] = useState(null);
+  const [showPreviousHatches, setShowPreviousHatches] = useState(false);
 
   const saveIncubator = (data) => {
     if (data.id) setIncubators((arr) => arr.map((i) => (i.id === data.id ? { ...i, ...data } : i)));
@@ -1139,30 +1216,53 @@ function IncubatorTab({ incubators, setIncubators, chickens, setChickens, breedi
     alert("Added candling, lockdown, and hatch-day reminders.");
   };
 
+  // A "finished" hatch is an incubator with eggs set, none of which are still incubating.
+  const isFinished = (inc) => inc.eggs.length > 0 && !inc.eggs.some((e) => e.status === "incubating");
+  const activeIncubators = incubators.filter((inc) => !isFinished(inc));
+  const finishedIncubators = incubators.filter(isFinished);
+
+  const renderCard = (inc) => (
+    <IncubatorCard
+      key={inc.id} inc={inc} accent={accent} breedingPairs={breedingPairs} chickens={chickens}
+      onEdit={() => setModal({ data: inc })}
+      onDelete={() => setConfirmDelete(inc.id)}
+      onAddEggs={() => setEggModal({ incubatorId: inc.id })}
+      onRemoveEgg={(eggId, reason) => setIncubators((arr) => arr.map((i) => i.id !== inc.id ? i : { ...i, eggs: i.eggs.map((e) => e.id === eggId ? { ...e, status: "removed", removedDate: todayStr(), removedReason: reason } : e) }))}
+      onHatchEgg={(eggId) => setIncubators((arr) => arr.map((i) => i.id !== inc.id ? i : { ...i, eggs: i.eggs.map((e) => e.id === eggId ? { ...e, status: "hatched", hatchedDate: todayStr() } : e) }))}
+      onAddToFlock={(egg) => setHatchModal({ incubatorId: inc.id, egg })}
+      onAddReminders={() => addReminders(inc)}
+      onUpdateNotes={(eggId, notes) => setIncubators((arr) => arr.map((i) => i.id !== inc.id ? i : { ...i, eggs: i.eggs.map((e) => (e.id === eggId ? { ...e, notes } : e)) }))}
+      onDeleteEgg={(eggId) => setIncubators((arr) => arr.map((i) => i.id !== inc.id ? i : { ...i, eggs: i.eggs.filter((e) => e.id !== eggId) }))}
+      onUpdateEgg={(eggId, updates) => setIncubators((arr) => arr.map((i) => i.id !== inc.id ? i : { ...i, eggs: i.eggs.map((e) => (e.id === eggId ? { ...e, ...updates } : e)) }))}
+      onUpdateEggPhoto={(eggId, photo) => setIncubators((arr) => arr.map((i) => i.id !== inc.id ? i : { ...i, eggs: i.eggs.map((e) => (e.id === eggId ? { ...e, photo } : e)) }))}
+    />
+  );
+
   return (
     <div>
       <div className="flex justify-end mb-4"><Btn accent={accent} onClick={() => setModal({ data: {} })}><Plus size={16} /> New incubator</Btn></div>
       {incubators.length === 0 ? (
         <EmptyState icon={EggIcon} accent={accent} title="No incubators running" subtitle="Set one up to start tracking eggs through to hatch." onAction={() => setModal({ data: {} })} actionLabel="New incubator" />
       ) : (
-        <div className="space-y-5">
-          {incubators.map((inc) => (
-            <IncubatorCard
-              key={inc.id} inc={inc} accent={accent} breedingPairs={breedingPairs} chickens={chickens}
-              onEdit={() => setModal({ data: inc })}
-              onDelete={() => setConfirmDelete(inc.id)}
-              onAddEggs={() => setEggModal({ incubatorId: inc.id })}
-              onRemoveEgg={(eggId, reason) => setIncubators((arr) => arr.map((i) => i.id !== inc.id ? i : { ...i, eggs: i.eggs.map((e) => e.id === eggId ? { ...e, status: "removed", removedDate: todayStr(), removedReason: reason } : e) }))}
-              onHatchEgg={(eggId) => setIncubators((arr) => arr.map((i) => i.id !== inc.id ? i : { ...i, eggs: i.eggs.map((e) => e.id === eggId ? { ...e, status: "hatched", hatchedDate: todayStr() } : e) }))}
-              onAddToFlock={(egg) => setHatchModal({ incubatorId: inc.id, egg })}
-              onAddReminders={() => addReminders(inc)}
-              onUpdateNotes={(eggId, notes) => setIncubators((arr) => arr.map((i) => i.id !== inc.id ? i : { ...i, eggs: i.eggs.map((e) => (e.id === eggId ? { ...e, notes } : e)) }))}
-              onDeleteEgg={(eggId) => setIncubators((arr) => arr.map((i) => i.id !== inc.id ? i : { ...i, eggs: i.eggs.filter((e) => e.id !== eggId) }))}
-              onUpdateEgg={(eggId, updates) => setIncubators((arr) => arr.map((i) => i.id !== inc.id ? i : { ...i, eggs: i.eggs.map((e) => (e.id === eggId ? { ...e, ...updates } : e)) }))}
-              onUpdateEggPhoto={(eggId, photo) => setIncubators((arr) => arr.map((i) => i.id !== inc.id ? i : { ...i, eggs: i.eggs.map((e) => (e.id === eggId ? { ...e, photo } : e)) }))}
-            />
-          ))}
-        </div>
+        <>
+          {activeIncubators.length === 0 ? (
+            <p className="text-sm mb-5" style={{ color: "var(--slate)" }}>No incubators currently running.</p>
+          ) : (
+            <div className="space-y-5">{activeIncubators.map(renderCard)}</div>
+          )}
+
+          {finishedIncubators.length > 0 && (
+            <div className="mt-6">
+              <Btn accent={accent} variant="ghost" onClick={() => setShowPreviousHatches((v) => !v)}>
+                <ChevronDown size={14} className={showPreviousHatches ? "" : "-rotate-90"} style={{ transition: "transform .15s" }} />
+                Previous hatches ({finishedIncubators.length})
+              </Btn>
+              {showPreviousHatches && (
+                <div className="space-y-5 mt-4">{finishedIncubators.map(renderCard)}</div>
+              )}
+            </div>
+          )}
+        </>
       )}
       {modal && <IncubatorForm accent={accent} initial={modal.data} onSave={saveIncubator} onClose={() => setModal(null)} />}
       {eggModal && (
@@ -1175,7 +1275,7 @@ function IncubatorTab({ incubators, setIncubators, chickens, setChickens, breedi
           chickens={chickens} onClose={() => setHatchModal(null)}
           onSave={(data) => {
             const newId = uid();
-            setChickens((cs) => [...cs, { ...data, id: newId, status: "active" }]);
+            setChickens((cs) => [...cs, { ...data, id: newId, status: "active", hatchedFromPhoto: hatchModal.egg.photo || null }]);
             setIncubators((arr) => arr.map((i) => i.id !== hatchModal.incubatorId ? i : { ...i, eggs: i.eggs.map((e) => e.id === hatchModal.egg.id ? { ...e, addedToFlock: true, chickId: newId } : e) }));
             setHatchModal(null);
           }} />
@@ -1241,6 +1341,15 @@ function IncubatorCard({ inc, accent, breedingPairs, chickens, onEdit, onDelete,
   const [eggView, setEggView] = useState("list"); // "list" | "carton"
   const [gridEgg, setGridEgg] = useState(null); // egg selected in carton view
   const [celebrating, setCelebrating] = useState(null); // egg id currently celebrating
+  const [expandedRemoved, setExpandedRemoved] = useState(() => new Set()); // local-only, never persisted or synced — resets on reload
+  const toggleRemovedExpanded = (eggId) => {
+    setExpandedRemoved((prev) => {
+      const next = new Set(prev);
+      if (next.has(eggId)) next.delete(eggId);
+      else next.add(eggId);
+      return next;
+    });
+  };
   const total = inc.eggs.length;
   const hatched = inc.eggs.filter((e) => e.status === "hatched").length;
   const removed = inc.eggs.filter((e) => e.status === "removed").length;
@@ -1339,6 +1448,27 @@ function IncubatorCard({ inc, accent, breedingPairs, chickens, onEdit, onDelete,
               {orderedEggs.map((egg, idx) => {
                 const dayCount = egg.status === "incubating" ? daysBetween(egg.setDate, todayStr()) : null;
                 const glow = dayCount != null ? Math.max(0.14, Math.min(1, dayCount / days)) : 0;
+                const isCollapsedRemoved = egg.status === "removed" && !expandedRemoved.has(egg.id);
+
+                if (isCollapsedRemoved) {
+                  return (
+                    <button
+                      key={egg.id}
+                      onClick={() => toggleRemovedExpanded(egg.id)}
+                      className="w-full flex items-center gap-2.5 py-1.5 px-2 rounded-lg text-left hover:bg-black/5 transition-colors"
+                      style={{ background: "rgba(107,117,97,0.07)" }}
+                      title="Click to view details"
+                    >
+                      <span className="text-xs font-mono font-bold w-5 text-right flex-shrink-0" style={{ color: "var(--slate)" }}>{idx + 1}</span>
+                      <EggShape size={21} fill="#F5F1E6" ring="#6B7561" />
+                      <p className="text-xs font-mono flex-1 min-w-0 truncate" style={{ color: "var(--slate)" }}>
+                        Removed{egg.removedReason ? ` · ${egg.removedReason}` : ""}
+                      </p>
+                      <ChevronDown size={14} className="-rotate-90 flex-shrink-0" style={{ color: "var(--slate)" }} />
+                    </button>
+                  );
+                }
+
                 return (
                   <div key={egg.id} className="flex items-center gap-2.5 py-1.5 px-2 rounded-lg flex-wrap" style={{ background: "rgba(14,124,134,0.05)" }}>
                     <span className="text-xs font-mono font-bold w-5 text-right flex-shrink-0" style={{ color: "var(--slate)" }}>{idx + 1}</span>
@@ -1359,6 +1489,9 @@ function IncubatorCard({ inc, accent, breedingPairs, chickens, onEdit, onDelete,
                       {egg.notes && <p className="text-xs italic truncate mt-0.5" style={{ color: accent }}>"{egg.notes}"</p>}
                     </div>
                     <div className="flex items-center gap-0.5 flex-shrink-0">
+                      {egg.status === "removed" && (
+                        <IconBtn icon={ChevronDown} title="Collapse" onClick={() => toggleRemovedExpanded(egg.id)} />
+                      )}
                       <IconBtn icon={Camera} accent={egg.photo ? accent : "var(--slate)"} title={egg.photo ? "View/replace egg photo" : "Add egg photo"} onClick={() => setPhotoFor(egg.id)} />
                       <IconBtn icon={StickyNote} accent={egg.notes ? accent : "var(--slate)"} title={egg.notes ? "Edit note" : "Add note"} onClick={() => setNoteFor(egg.id)} />
                       <IconBtn icon={Pencil} title="Edit egg" onClick={() => setEditEgg(egg)} />
@@ -2649,7 +2782,10 @@ function MainApp({ userId, onLogout }) {
         </div>
       )}
       {loading ? (
-        <div className="h-screen flex items-center justify-center"><Loader2 className="animate-spin" size={28} style={{ color: "var(--teal)" }} /></div>
+        <div className="h-screen flex flex-col items-center justify-center gap-3">
+          <CrackingEgg size={56} />
+          <p className="text-sm font-semibold" style={{ color: "var(--slate)", fontFamily: "'Playfair Display', serif" }}>Warming the incubator…</p>
+        </div>
       ) : (
         <>
           <header className="px-4 sm:px-6 pt-5 pb-2">
