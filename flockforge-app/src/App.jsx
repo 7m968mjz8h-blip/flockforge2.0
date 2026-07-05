@@ -973,15 +973,23 @@ function FlockTab({ chickens, setChickens, healthRecords, jumpToChickenId, onJum
             const ring = sexBorderColor(c.sex);
             return (
               <div key={c.id} onClick={() => setDetail(c)} className="rounded-2xl overflow-hidden cursor-pointer bg-white shadow-sm hover:shadow-md transition-shadow" style={{ opacity: (c.status === "deceased" || c.status === "sold") ? 0.55 : 1 }}>
-                <div className="h-24 flex items-end justify-center relative" style={{ background: `linear-gradient(160deg, ${ring}22, ${ring}44)` }}>
-                  <div className="w-16 h-16 flex items-center justify-center overflow-hidden flex-shrink-0 border-2 mb-2.5" style={{ borderRadius: "50% 50% 48% 48% / 62% 62% 40% 40%", borderColor: ring, background: "#fff" }}>
-                    {c.photo ? <img src={c.photo} className="w-full h-full object-cover" /> : <Bird size={24} style={{ color: ring }} />}
+                {c.photo ? (
+                  <div className="relative w-full" style={{ aspectRatio: "4 / 3" }}>
+                    <img src={c.photo} className="absolute inset-0 w-full h-full object-cover" />
+                    <div className="absolute top-2 right-2 flex flex-col items-end gap-1">
+                      {c.status === "deceased" && <Badge bg="rgba(0,0,0,0.55)" color="#fff">deceased</Badge>}
+                      {c.status === "sold" && <Badge bg="rgba(0,0,0,0.55)" color="#fff">sold</Badge>}
+                    </div>
                   </div>
-                  <div className="absolute top-2 right-2 flex flex-col items-end gap-1">
-                    {c.status === "deceased" && <Badge bg="#6B756133" color="#6B7561">deceased</Badge>}
-                    {c.status === "sold" && <Badge bg="#8C6D3F33" color="#8C6D3F">sold</Badge>}
+                ) : (
+                  <div className="h-28 flex items-center justify-center relative" style={{ background: `linear-gradient(160deg, color-mix(in srgb, ${ring} 13%, transparent), color-mix(in srgb, ${ring} 26%, transparent))` }}>
+                    <Bird size={40} style={{ color: ring }} />
+                    <div className="absolute top-2 right-2 flex flex-col items-end gap-1">
+                      {c.status === "deceased" && <Badge bg="#6B756133" color="#6B7561">deceased</Badge>}
+                      {c.status === "sold" && <Badge bg="#8C6D3F33" color="#8C6D3F">sold</Badge>}
+                    </div>
                   </div>
-                </div>
+                )}
                 <div className="p-3 pt-2.5 min-w-0">
                   <p className="font-bold truncate" style={{ fontFamily: "'Playfair Display', serif" }}>{c.name || "Unnamed"}</p>
                   <p className="text-xs" style={{ color: "var(--slate)" }}>{c.breed || "Unknown breed"} · {ageString(c.hatchDate)}</p>
