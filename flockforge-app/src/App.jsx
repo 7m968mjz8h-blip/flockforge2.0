@@ -522,7 +522,7 @@ function StatPill({ label, value, accent }) {
   );
 }
 
-function PhotoSlot({ value, onChange, label = "Photo", shape = "egg", fit = "cover" }) {
+function PhotoSlot({ value, onChange, label = "Photo", shape = "egg", fit = "cover", aspect = 1 }) {
   const ref = useRef(null);
   const [busy, setBusy] = useState(false);
   const [cropSrc, setCropSrc] = useState(null);
@@ -539,11 +539,13 @@ function PhotoSlot({ value, onChange, label = "Photo", shape = "egg", fit = "cov
     }
     e.target.value = "";
   };
+  const previewW = aspect >= 1 ? 96 : Math.round(96 * aspect);
+  const previewH = aspect >= 1 ? Math.round(96 / aspect) : 96;
   return (
     <div>
       <span className="block text-xs font-bold uppercase mb-1" style={{ color: "var(--teal)" }}>{label}</span>
-      <div onClick={() => ref.current?.click()} className="relative w-24 h-24 flex items-center justify-center cursor-pointer overflow-hidden border-2"
-        style={{ borderRadius: shape === "egg" ? "50% 50% 48% 48% / 62% 62% 40% 40%" : 16, borderColor: "rgba(11,42,44,0.15)", background: "#fff" }}>
+      <div onClick={() => ref.current?.click()} className="relative flex items-center justify-center cursor-pointer overflow-hidden border-2"
+        style={{ width: previewW, height: previewH, borderRadius: shape === "egg" ? "50% 50% 48% 48% / 62% 62% 40% 40%" : 16, borderColor: "rgba(11,42,44,0.15)", background: "#fff" }}>
         {busy ? <Loader2 className="animate-spin" size={20} style={{ color: "var(--teal)" }} /> : value ? <img src={value} alt="" className={"w-full h-full " + (fit === "contain" ? "object-contain" : "object-cover")} /> : <Camera size={22} style={{ color: "var(--slate)" }} />}
       </div>
       <div className="flex items-center gap-2 mt-1">
@@ -555,6 +557,7 @@ function PhotoSlot({ value, onChange, label = "Photo", shape = "egg", fit = "cov
         <ImageCropModal
           src={cropSrc}
           shape={shape}
+          aspect={aspect}
           onCancel={() => setCropSrc(null)}
           onApply={(cropped) => { onChange(cropped); setCropSrc(null); }}
         />
@@ -563,29 +566,60 @@ function PhotoSlot({ value, onChange, label = "Photo", shape = "egg", fit = "cov
   );
 }
 
-function ImageCropModal({ src, shape, onCancel, onApply }) {
-  const FRAME = 260;
-  const OUTPUT = 480;
+/* Mild 3x3 sharpen convolution — helps soft/slightly-grainy phone photos read clearer.
+   Won't manufacture detail that isn't there, and can be skipped if it makes noise worse. */
+function sharpenCanvas(ctx, w, h) {
+  const imageData = ctx.getImageData(0, 0, w, h);
+  const data = imageData.data;
+  const out = new Uint8ClampedArray(data.length);
+  const kernel = [0, -0.5, 0, -0.5, 3, -0.5, 0, -0.5, 0];
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      for (let c = 0; c < 3; c++) {
+        let sum = 0, k = 0;
+        for (let ky = -1; ky <= 1; ky++) {
+          for (let kx = -1; kx <= 1; kx++) {
+            const yy = Math.min(h - 1, Math.max(0, y + ky));
+            const xx = Math.min(w - 1, Math.max(0, x + kx));
+            sum += data[(yy * w + xx) * 4 + c] * kernel[k]; k++;
+          }
+        }
+        out[(y * w + x) * 4 + c] = sum;
+      }
+      out[(y * w + x) * 4 + 3] = data[(y * w + x) * 4 + 3];
+    }
+  }
+  imageData.data.set(out);
+  ctx.putImageData(imageData, 0, 0);
+}
+
+function ImageCropModal({ src, shape, aspect = 1, onCancel, onApply }) {
+  const MAXDIM = 280;
+  const FRAME_W = aspect >= 1 ? MAXDIM : Math.round(MAXDIM * aspect);
+  const FRAME_H = aspect >= 1 ? Math.round(MAXDIM / aspect) : MAXDIM;
+  const OUTPUT_W = aspect >= 1 ? 640 : Math.round(640 * aspect);
+  const OUTPUT_H = aspect >= 1 ? Math.round(640 / aspect) : 640;
   const imgRef = useRef(null);
   const dragRef = useRef(null);
   const [natural, setNatural] = useState({ w: 0, h: 0 });
   const [minScale, setMinScale] = useState(1);
   const [scale, setScale] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
+  const [sharpen, setSharpen] = useState(true);
 
   const clampPan = (p, s, n) => {
     const dw = n.w * s, dh = n.h * s;
-    const minX = FRAME - dw, minY = FRAME - dh;
+    const minX = FRAME_W - dw, minY = FRAME_H - dh;
     return { x: Math.min(0, Math.max(minX, p.x)), y: Math.min(0, Math.max(minY, p.y)) };
   };
 
   const onImgLoad = (e) => {
     const w = e.target.naturalWidth, h = e.target.naturalHeight;
-    const ms = Math.max(FRAME / w, FRAME / h);
+    const ms = Math.max(FRAME_W / w, FRAME_H / h);
     setNatural({ w, h });
     setMinScale(ms);
     setScale(ms);
-    setPan({ x: (FRAME - w * ms) / 2, y: (FRAME - h * ms) / 2 });
+    setPan({ x: (FRAME_W - w * ms) / 2, y: (FRAME_H - h * ms) / 2 });
   };
 
   const onPointerDown = (e) => {
@@ -604,7 +638,7 @@ function ImageCropModal({ src, shape, onCancel, onApply }) {
 
   const handleZoom = (e) => {
     const newScale = parseFloat(e.target.value);
-    const cx = FRAME / 2, cy = FRAME / 2;
+    const cx = FRAME_W / 2, cy = FRAME_H / 2;
     const imgX = (cx - pan.x) / scale, imgY = (cy - pan.y) / scale;
     const newPan = { x: cx - imgX * newScale, y: cy - imgY * newScale };
     setScale(newScale);
@@ -613,13 +647,14 @@ function ImageCropModal({ src, shape, onCancel, onApply }) {
 
   const apply = () => {
     const canvas = document.createElement("canvas");
-    canvas.width = OUTPUT;
-    canvas.height = OUTPUT;
+    canvas.width = OUTPUT_W;
+    canvas.height = OUTPUT_H;
     const ctx = canvas.getContext("2d");
     const sx = -pan.x / scale, sy = -pan.y / scale;
-    const sSize = FRAME / scale;
-    ctx.drawImage(imgRef.current, sx, sy, sSize, sSize, 0, 0, OUTPUT, OUTPUT);
-    onApply(canvas.toDataURL("image/jpeg", 0.85));
+    const sSizeW = FRAME_W / scale, sSizeH = FRAME_H / scale;
+    ctx.drawImage(imgRef.current, sx, sy, sSizeW, sSizeH, 0, 0, OUTPUT_W, OUTPUT_H);
+    if (sharpen) sharpenCanvas(ctx, OUTPUT_W, OUTPUT_H);
+    onApply(canvas.toDataURL("image/jpeg", 0.88));
   };
 
   return (
@@ -627,7 +662,7 @@ function ImageCropModal({ src, shape, onCancel, onApply }) {
       <p className="text-xs mb-3" style={{ color: "var(--slate)" }}>Drag to reposition. Use the slider to zoom in or out.</p>
       <div
         className="relative mx-auto overflow-hidden select-none"
-        style={{ width: FRAME, height: FRAME, borderRadius: shape === "egg" ? "50% 50% 48% 48% / 62% 62% 40% 40%" : 16, background: "#1B2E1F", border: "2px solid rgba(11,42,44,0.15)", cursor: "grab", touchAction: "none" }}
+        style={{ width: FRAME_W, height: FRAME_H, borderRadius: shape === "egg" ? "50% 50% 48% 48% / 62% 62% 40% 40%" : 16, background: "#1B2E1F", border: "2px solid rgba(11,42,44,0.15)", cursor: "grab", touchAction: "none" }}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
@@ -646,6 +681,10 @@ function ImageCropModal({ src, shape, onCancel, onApply }) {
         type="range" min={minScale} max={minScale * 3} step={0.001} value={scale}
         onChange={handleZoom} className="w-full mt-4" style={{ accentColor: "var(--teal)" }}
       />
+      <label className="flex items-center gap-2 mt-3 text-xs cursor-pointer" style={{ color: "var(--slate)" }}>
+        <input type="checkbox" checked={sharpen} onChange={(e) => setSharpen(e.target.checked)} style={{ accentColor: "var(--teal)" }} />
+        Enhance clarity (mild sharpening — helps soft photos, turn off if it makes grain worse)
+      </label>
       <div className="flex justify-end gap-2 mt-3">
         <Btn variant="ghost" accent="rgba(11,42,44,0.5)" onClick={onCancel}>Cancel</Btn>
         <Btn accent="var(--teal)" onClick={apply}><Check size={15} /> Use this crop</Btn>
@@ -712,7 +751,7 @@ function DashboardTab({ chickens, incubators, eggLogs, setEggLogs, reminders, on
     <div>
       <div
         className="rounded-2xl p-4 mb-4 shadow-sm"
-        style={{ background: "linear-gradient(160deg, var(--teal-deep, #16241B), #24382a)" }}
+        style={{ background: "linear-gradient(160deg, var(--ink, #16241B), #24382a)" }}
       >
         <div className="flex items-baseline justify-between mb-1">
           <span className="text-xs font-bold uppercase" style={{ color: "var(--aqua)", letterSpacing: "0.1em" }}>Eggs this week</span>
@@ -934,23 +973,15 @@ function FlockTab({ chickens, setChickens, healthRecords, jumpToChickenId, onJum
             const ring = sexBorderColor(c.sex);
             return (
               <div key={c.id} onClick={() => setDetail(c)} className="rounded-2xl overflow-hidden cursor-pointer bg-white shadow-sm hover:shadow-md transition-shadow" style={{ opacity: (c.status === "deceased" || c.status === "sold") ? 0.55 : 1 }}>
-                {c.photo ? (
-                  <div className="relative w-full" style={{ aspectRatio: "4 / 3" }}>
-                    <img src={c.photo} className="absolute inset-0 w-full h-full object-cover" />
-                    <div className="absolute top-2 right-2 flex flex-col items-end gap-1">
-                      {c.status === "deceased" && <Badge bg="rgba(0,0,0,0.55)" color="#fff">deceased</Badge>}
-                      {c.status === "sold" && <Badge bg="rgba(0,0,0,0.55)" color="#fff">sold</Badge>}
-                    </div>
+                <div className="h-24 flex items-end justify-center relative" style={{ background: `linear-gradient(160deg, ${ring}22, ${ring}44)` }}>
+                  <div className="w-16 h-16 flex items-center justify-center overflow-hidden flex-shrink-0 border-2 mb-2.5" style={{ borderRadius: "50% 50% 48% 48% / 62% 62% 40% 40%", borderColor: ring, background: "#fff" }}>
+                    {c.photo ? <img src={c.photo} className="w-full h-full object-cover" /> : <Bird size={24} style={{ color: ring }} />}
                   </div>
-                ) : (
-                  <div className="h-28 flex items-center justify-center relative" style={{ background: `linear-gradient(160deg, color-mix(in srgb, ${ring} 13%, transparent), color-mix(in srgb, ${ring} 26%, transparent))` }}>
-                    <Bird size={40} style={{ color: ring }} />
-                    <div className="absolute top-2 right-2 flex flex-col items-end gap-1">
-                      {c.status === "deceased" && <Badge bg="#6B756133" color="#6B7561">deceased</Badge>}
-                      {c.status === "sold" && <Badge bg="#8C6D3F33" color="#8C6D3F">sold</Badge>}
-                    </div>
+                  <div className="absolute top-2 right-2 flex flex-col items-end gap-1">
+                    {c.status === "deceased" && <Badge bg="#6B756133" color="#6B7561">deceased</Badge>}
+                    {c.status === "sold" && <Badge bg="#8C6D3F33" color="#8C6D3F">sold</Badge>}
                   </div>
-                )}
+                </div>
                 <div className="p-3 pt-2.5 min-w-0">
                   <p className="font-bold truncate" style={{ fontFamily: "'Playfair Display', serif" }}>{c.name || "Unnamed"}</p>
                   <p className="text-xs" style={{ color: "var(--slate)" }}>{c.breed || "Unknown breed"} · {ageString(c.hatchDate)}</p>
@@ -1182,7 +1213,7 @@ function ChickenForm({ accent, initial, chickens, onSave, onClose }) {
         </Field>
       </div>
       <div className="flex gap-4 mb-3">
-        <PhotoSlot value={f.photo} onChange={(v) => setF({ ...f, photo: v })} label="Bird photo" />
+        <PhotoSlot value={f.photo} onChange={(v) => setF({ ...f, photo: v })} label="Bird photo" shape="square" aspect={4 / 3} />
         {f.sex === "hen" && <PhotoSlot value={f.eggPhoto} onChange={(v) => setF({ ...f, eggPhoto: v })} label="Egg photo" />}
       </div>
       <Field label="Notes"><TextArea value={f.notes} onChange={(e) => setF({ ...f, notes: e.target.value })} placeholder="Broody every spring, friendly with kids..." /></Field>
