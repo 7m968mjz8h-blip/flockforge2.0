@@ -1,10 +1,14 @@
-import React, { useState, useEffect, useRef, useMemo } from "react";
+import React, { useState, useEffect, useRef, useMemo, createContext, useContext } from "react";
 import {
   Bird, Egg as EggIcon, Heart, CalendarDays, Stethoscope, GitBranch, BellRing,
   Feather, Plus, X, Pencil, Trash2, Camera, ChevronDown, ChevronLeft, ChevronRight,
   Check, Loader2, Link2, Gauge, Wallet, Repeat, Search, Download, Upload, AlertTriangle, ShoppingBasket, StickyNote, LogOut, Mail, Lock
 } from "lucide-react";
 import { supabase } from "./supabaseClient.js";
+
+/* Provides the logged-in user's id to any component (e.g. PhotoSlot) that needs it
+   for scoping Storage uploads, without threading it through every form's props. */
+const UserIdContext = createContext(null);
 
 /* ----------------------------- constants ----------------------------- */
 
@@ -522,16 +526,70 @@ function StatPill({ label, value, accent }) {
   );
 }
 
+/* Converts a base64 data URL (e.g. "data:image/jpeg;base64,...") into a Blob for upload. */
+function dataUrlToBlob(dataUrl) {
+  const [head, b64] = dataUrl.split(",");
+  const mime = (head.match(/data:(.*?);/) || [])[1] || "image/jpeg";
+  const bin = atob(b64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return new Blob([bytes], { type: mime });
+}
+
+/* Uploads an image to the "photos" Storage bucket and returns its public URL.
+   Accepts either a base64 data URL or an already-hosted URL (returned as-is).
+   This is the core of keeping the database small: only the short URL is stored in user_data. */
+async function uploadPhotoToStorage(imageData, userId) {
+  if (!imageData) return null;
+  // Already a hosted URL (http/https) — nothing to upload, keep as-is.
+  if (/^https?:\/\//.test(imageData)) return imageData;
+  // Only handle base64 data URLs; anything else, return unchanged defensively.
+  if (!imageData.startsWith("data:")) return imageData;
+
+  const blob = dataUrlToBlob(imageData);
+  const ext = (blob.type.split("/")[1] || "jpg").replace("jpeg", "jpg");
+  const path = `${userId}/${Date.now()}-${Math.random().toString(36).slice(2, 9)}.${ext}`;
+  const { error } = await supabase.storage.from("photos").upload(path, blob, {
+    contentType: blob.type,
+    upsert: false,
+  });
+  if (error) throw error;
+  const { data } = supabase.storage.from("photos").getPublicUrl(path);
+  return data.publicUrl;
+}
+
 function PhotoSlot({ value, onChange, label = "Photo", shape = "egg", fit = "cover", aspect = 1 }) {
+  const userId = useContext(UserIdContext);
   const ref = useRef(null);
   const [busy, setBusy] = useState(false);
   const [cropSrc, setCropSrc] = useState(null);
+  const [uploadErr, setUploadErr] = useState(false);
+
+  // Takes a base64 image, uploads to Storage, hands back the URL. Falls back to
+  // keeping base64 in place if the upload fails, so a photo is never silently lost.
+  const commitPhoto = async (base64) => {
+    if (!base64) { onChange(null); return; }
+    if (!userId) { onChange(base64); return; } // no session yet: keep base64, will migrate later
+    setBusy(true);
+    setUploadErr(false);
+    try {
+      const url = await uploadPhotoToStorage(base64, userId);
+      onChange(url);
+    } catch (e) {
+      console.warn("[FlockForge] Photo upload to Storage failed; keeping image inline for now.", e);
+      setUploadErr(true);
+      onChange(base64); // don't lose the photo — fall back to inline
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const handle = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
     if (fit === "contain") {
       setBusy(true);
-      try { onChange(await resizeImage(file, 480)); } finally { setBusy(false); }
+      try { await commitPhoto(await resizeImage(file, 480)); } finally { setBusy(false); }
     } else {
       const reader = new FileReader();
       reader.onload = () => setCropSrc(reader.result);
@@ -552,6 +610,7 @@ function PhotoSlot({ value, onChange, label = "Photo", shape = "egg", fit = "cov
         {value && fit !== "contain" && <button onClick={() => setCropSrc(value)} className="text-xs underline" style={{ color: "var(--teal)" }}>Adjust crop</button>}
         {value && <button onClick={() => onChange(null)} className="text-xs underline" style={{ color: "var(--danger)" }}>Remove</button>}
       </div>
+      {uploadErr && <p className="text-[10px] mt-0.5" style={{ color: "var(--danger)" }}>Couldn't upload to storage — saved on device for now.</p>}
       <input ref={ref} type="file" accept="image/*" className="hidden" onChange={handle} />
       {cropSrc && (
         <ImageCropModal
@@ -559,7 +618,7 @@ function PhotoSlot({ value, onChange, label = "Photo", shape = "egg", fit = "cov
           shape={shape}
           aspect={aspect}
           onCancel={() => setCropSrc(null)}
-          onApply={(cropped) => { onChange(cropped); setCropSrc(null); }}
+          onApply={(cropped) => { setCropSrc(null); commitPhoto(cropped); }}
         />
       )}
     </div>
@@ -713,7 +772,7 @@ function DashCard({ icon: Icon, label, value, sub, accent, onClick, cornerAction
   );
 }
 
-function DashboardTab({ chickens, incubators, eggLogs, setEggLogs, reminders, onNavigate, onExport, onImport, theme, onThemeChange }) {
+function DashboardTab({ chickens, incubators, eggLogs, setEggLogs, reminders, onNavigate, onExport, onImport, onRestore, theme, onThemeChange }) {
   const fileRef = useRef(null);
   const [pendingImport, setPendingImport] = useState(null);
   const [quickLogOpen, setQuickLogOpen] = useState(false);
@@ -843,10 +902,10 @@ function DashboardTab({ chickens, incubators, eggLogs, setEggLogs, reminders, on
 
       <div className="bg-white rounded-2xl p-4 shadow-sm mt-4" style={{ background: "var(--card)" }}>
         <h3 className="font-bold mb-1" style={{ fontFamily: "'Playfair Display', serif" }}>Backup & restore</h3>
-        <p className="text-sm mb-3" style={{ color: "var(--slate)" }}>Your data lives in this artifact. Export a backup now and then so you always have a copy.</p>
+        <p className="text-sm mb-3" style={{ color: "var(--slate)" }}>Export a backup now and then so you always have a copy. Restoring from a backup imports your flock and moves any photos into cloud storage.</p>
         <div className="flex gap-2 flex-wrap">
           <Btn accent="var(--teal)" onClick={onExport}><Download size={15} /> Export backup</Btn>
-          <Btn accent="#8C6D3F" variant="ghost" onClick={() => fileRef.current?.click()}><Upload size={15} /> Restore backup</Btn>
+          {onRestore && <Btn accent="var(--teal)" variant="ghost" onClick={onRestore}><Upload size={15} /> Restore from backup</Btn>}
         </div>
         <input
           ref={fileRef} type="file" accept="application/json" className="hidden"
@@ -2749,7 +2808,7 @@ function GlobalStyle() {
   );
 }
 
-function MainApp({ userId, onLogout }) {
+function MainApp({ userId, onLogout, onRestore }) {
   const [active, setActive] = useState("dashboard");
   const [ready, setReady] = useState(0);
   const [loadErrors, setLoadErrors] = useState([]);
@@ -2820,6 +2879,7 @@ function MainApp({ userId, onLogout }) {
   };
 
   return (
+    <UserIdContext.Provider value={userId}>
     <div className="min-h-screen" style={{ background: "var(--mist)", fontFamily: "Manrope, sans-serif", color: "var(--ink)" }}>
       <GlobalStyle />
 
@@ -2881,7 +2941,7 @@ function MainApp({ userId, onLogout }) {
           </div>
 
           <main className="px-4 sm:px-6 pb-12 pt-4">
-            {active === "dashboard" && <DashboardTab chickens={chickens} incubators={incubators} eggLogs={eggLogs} setEggLogs={setEggLogs} reminders={reminders} onNavigate={setActive} onExport={exportData} onImport={importData} theme={theme} onThemeChange={setTheme} />}
+            {active === "dashboard" && <DashboardTab chickens={chickens} incubators={incubators} eggLogs={eggLogs} setEggLogs={setEggLogs} reminders={reminders} onNavigate={setActive} onExport={exportData} onImport={importData} onRestore={onRestore} theme={theme} onThemeChange={setTheme} />}
             {active === "flock" && <FlockTab chickens={chickens} setChickens={setChickens} healthRecords={healthRecords} jumpToChickenId={jumpTarget} onJumpHandled={() => setJumpTarget(null)} />}
             {active === "incubator" && <IncubatorTab incubators={incubators} setIncubators={setIncubators} chickens={chickens} setChickens={setChickens} breedingPairs={breedingPairs} setReminders={setReminders} />}
             {active === "breeding" && <BreedingTab breedingPairs={breedingPairs} setBreedingPairs={setBreedingPairs} chickens={chickens} />}
@@ -2902,6 +2962,7 @@ function MainApp({ userId, onLogout }) {
         />
       )}
     </div>
+    </UserIdContext.Provider>
   );
 }
 
@@ -3022,10 +3083,177 @@ function MigrationPrompt({ userId, onDone }) {
   );
 }
 
+/* One-time restore from an exported FlockForge JSON backup.
+   Uploads any inline base64 photos to Storage (so the DB stays small), then writes
+   each data category into user_data. Designed to be safe to re-run: it only writes,
+   never deletes your backup file, and reports progress + any per-photo failures. */
+function RestoreFromBackup({ userId, onClose }) {
+  const fileRef = useRef(null);
+  const [phase, setPhase] = useState("idle"); // idle | working | done | error
+  const [progress, setProgress] = useState({ done: 0, total: 0, label: "" });
+  const [summary, setSummary] = useState(null);
+  const [errorMsg, setErrorMsg] = useState("");
+
+  // Photo-bearing fields per data category.
+  const PHOTO_FIELDS = {
+    chickens: ["photo", "eggPhoto", "hatchedFromPhoto"],
+    incubators: [], // eggs handled specially below
+    eggLogs: [],
+  };
+
+  const uploadIfNeeded = async (val) => {
+    if (!val || typeof val !== "string" || !val.startsWith("data:")) return val;
+    return await uploadPhotoToStorage(val, userId);
+  };
+
+  const run = async (backup) => {
+    setPhase("working");
+    setErrorMsg("");
+    const keys = ["chickens", "incubators", "breedingPairs", "eggLogs", "healthRecords", "mortalityLog", "reminders", "feedCosts", "eggSales", "birdSales"];
+
+    // Count photos up front for progress display.
+    let totalPhotos = 0;
+    for (const c of backup.chickens || []) for (const f of PHOTO_FIELDS.chickens) if (typeof c[f] === "string" && c[f].startsWith("data:")) totalPhotos++;
+    for (const inc of backup.incubators || []) for (const egg of (inc.eggs || [])) if (typeof egg.photo === "string" && egg.photo.startsWith("data:")) totalPhotos++;
+
+    let photoDone = 0, photoFailed = 0;
+    const bump = (label) => { photoDone++; setProgress({ done: photoDone, total: totalPhotos, label }); };
+
+    try {
+      // Deep-copy so we never mutate the original parsed backup.
+      const data = JSON.parse(JSON.stringify(backup));
+
+      // Upload chicken photos.
+      for (const c of data.chickens || []) {
+        for (const f of PHOTO_FIELDS.chickens) {
+          if (typeof c[f] === "string" && c[f].startsWith("data:")) {
+            try { c[f] = await uploadIfNeeded(c[f]); bump(c.name || "bird"); }
+            catch (e) { photoFailed++; bump(c.name || "bird"); /* leave inline on failure */ }
+          }
+        }
+      }
+      // Upload incubator egg photos.
+      for (const inc of data.incubators || []) {
+        for (const egg of (inc.eggs || [])) {
+          if (typeof egg.photo === "string" && egg.photo.startsWith("data:")) {
+            try { egg.photo = await uploadIfNeeded(egg.photo); bump("egg"); }
+            catch (e) { photoFailed++; bump("egg"); }
+          }
+        }
+      }
+
+      // Write each category into user_data.
+      for (const key of keys) {
+        const value = Array.isArray(data[key]) ? data[key] : [];
+        const { error } = await supabase.from("user_data").upsert({ user_id: userId, key, value, updated_at: new Date().toISOString() });
+        if (error) throw error;
+      }
+
+      setSummary({
+        birds: (data.chickens || []).length,
+        incubators: (data.incubators || []).length,
+        eggLogs: (data.eggLogs || []).length,
+        health: (data.healthRecords || []).length,
+        photosUploaded: photoDone - photoFailed,
+        photosFailed: photoFailed,
+      });
+      setPhase("done");
+    } catch (e) {
+      console.error("[FlockForge] Restore failed", e);
+      setErrorMsg(e?.message || "Something went wrong during import.");
+      setPhase("error");
+    }
+  };
+
+  const onFile = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const backup = JSON.parse(reader.result);
+        if (!backup || !Array.isArray(backup.chickens)) {
+          setErrorMsg("That doesn't look like a FlockForge backup file.");
+          setPhase("error");
+          return;
+        }
+        run(backup);
+      } catch (err) {
+        setErrorMsg("Couldn't read that file — is it the exported .json backup?");
+        setPhase("error");
+      }
+    };
+    reader.readAsText(file);
+    e.target.value = "";
+  };
+
+  return (
+    <Modal title="Restore from backup" accent="var(--teal)" onClose={phase === "working" ? undefined : onClose}>
+      {phase === "idle" && (
+        <>
+          <p className="text-sm mb-4" style={{ color: "var(--ink)" }}>
+            Choose your exported FlockForge <span style={{ fontFamily: "'JetBrains Mono', monospace" }}>.json</span> backup file. Your birds, incubators, and records will be imported, and any photos will be moved into cloud storage automatically. Your backup file is not changed.
+          </p>
+          <input ref={fileRef} type="file" accept="application/json,.json" className="hidden" onChange={onFile} />
+          <div className="flex justify-end gap-2">
+            <Btn variant="ghost" accent="rgba(11,42,44,0.5)" onClick={onClose}>Cancel</Btn>
+            <Btn accent="var(--teal)" onClick={() => fileRef.current?.click()}><Upload size={15} /> Choose backup file</Btn>
+          </div>
+        </>
+      )}
+
+      {phase === "working" && (
+        <div className="text-center py-4">
+          <Loader2 className="animate-spin mx-auto mb-3" size={28} style={{ color: "var(--teal)" }} />
+          <p className="text-sm font-semibold" style={{ color: "var(--ink)" }}>Importing your flock…</p>
+          {progress.total > 0 && (
+            <>
+              <p className="text-xs mt-1" style={{ color: "var(--slate)" }}>Uploading photos: {progress.done} of {progress.total}</p>
+              <div className="w-full h-2 rounded-full mt-2 overflow-hidden" style={{ background: "rgba(11,42,44,0.1)" }}>
+                <div className="h-full rounded-full transition-all" style={{ width: `${Math.round((progress.done / progress.total) * 100)}%`, background: "var(--teal)" }} />
+              </div>
+            </>
+          )}
+          <p className="text-[11px] mt-3" style={{ color: "var(--slate)" }}>Please keep this screen open until it finishes.</p>
+        </div>
+      )}
+
+      {phase === "done" && summary && (
+        <div className="py-2">
+          <div className="flex items-center gap-2 mb-3">
+            <Check size={20} style={{ color: "var(--teal)" }} />
+            <p className="font-bold" style={{ fontFamily: "'Playfair Display', serif", color: "var(--ink)" }}>Import complete!</p>
+          </div>
+          <div className="text-sm space-y-1" style={{ color: "var(--ink)" }}>
+            <p>🐔 {summary.birds} birds</p>
+            <p>🥚 {summary.incubators} incubators · {summary.eggLogs} egg log entries</p>
+            <p>🩺 {summary.health} health records</p>
+            <p>📷 {summary.photosUploaded} photos moved to storage{summary.photosFailed ? ` (${summary.photosFailed} couldn't upload and stayed inline)` : ""}</p>
+          </div>
+          <div className="flex justify-end mt-4">
+            <Btn accent="var(--teal)" onClick={() => window.location.reload()}>See my flock</Btn>
+          </div>
+        </div>
+      )}
+
+      {phase === "error" && (
+        <div className="py-2">
+          <p className="text-sm mb-4" style={{ color: "var(--danger)" }}>{errorMsg}</p>
+          <div className="flex justify-end gap-2">
+            <Btn variant="ghost" accent="rgba(11,42,44,0.5)" onClick={onClose}>Close</Btn>
+            <Btn accent="var(--teal)" onClick={() => { setPhase("idle"); setErrorMsg(""); }}>Try again</Btn>
+          </div>
+        </div>
+      )}
+    </Modal>
+  );
+}
+
 export default function App() {
   const [session, setSession] = useState(undefined);
   const [migrationChecked, setMigrationChecked] = useState(false);
   const [showMigration, setShowMigration] = useState(false);
+  const [showRestore, setShowRestore] = useState(false);
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => setSession(data.session ?? null));
@@ -3068,8 +3296,9 @@ export default function App() {
 
   return (
     <>
-      <MainApp userId={session.user.id} onLogout={() => supabase.auth.signOut()} />
+      <MainApp userId={session.user.id} onLogout={() => supabase.auth.signOut()} onRestore={() => setShowRestore(true)} />
       {showMigration && <MigrationPrompt userId={session.user.id} onDone={() => setShowMigration(false)} />}
+      {showRestore && <RestoreFromBackup userId={session.user.id} onClose={() => setShowRestore(false)} />}
     </>
   );
 }
