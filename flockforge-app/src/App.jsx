@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useRef, useMemo, createContext, useContext } from "react";
 import {
   Bird, Egg as EggIcon, Heart, CalendarDays, Stethoscope, GitBranch, BellRing,
-  Feather, Plus, X, Pencil, Trash2, Camera, ChevronDown, ChevronLeft, ChevronRight,
-  Check, Loader2, Link2, Gauge, Wallet, Repeat, Search, Download, Upload, AlertTriangle, ShoppingBasket, StickyNote, LogOut, Mail, Lock
+  Feather, Plus, X, Pencil, Trash2, Camera, ChevronDown, ChevronLeft, ChevronRight, RotateCcw,
+  Check, Loader2, Link2, Gauge, Wallet, Repeat, Search, Download, Upload, AlertTriangle, ShoppingBasket, StickyNote, LogOut
 } from "lucide-react";
 import { supabase } from "./supabaseClient.js";
 
@@ -772,9 +772,7 @@ function DashCard({ icon: Icon, label, value, sub, accent, onClick, cornerAction
   );
 }
 
-function DashboardTab({ chickens, incubators, eggLogs, setEggLogs, reminders, onNavigate, onExport, onImport, onRestore, theme, onThemeChange }) {
-  const fileRef = useRef(null);
-  const [pendingImport, setPendingImport] = useState(null);
+function DashboardTab({ chickens, incubators, eggLogs, setEggLogs, reminders, onNavigate, onExport, onRestore, theme, onThemeChange }) {
   const [quickLogOpen, setQuickLogOpen] = useState(false);
   const pens = useMemo(() => [...new Set(chickens.map((c) => c.pen).filter(Boolean))], [chickens]);
   const active = chickens.filter((c) => c.status !== "deceased");
@@ -907,27 +905,7 @@ function DashboardTab({ chickens, incubators, eggLogs, setEggLogs, reminders, on
           <Btn accent="var(--teal)" onClick={onExport}><Download size={15} /> Export backup</Btn>
           {onRestore && <Btn accent="var(--teal)" variant="ghost" onClick={onRestore}><Upload size={15} /> Restore from backup</Btn>}
         </div>
-        <input
-          ref={fileRef} type="file" accept="application/json" className="hidden"
-          onChange={async (e) => {
-            const file = e.target.files?.[0];
-            if (!file) return;
-            try { setPendingImport(JSON.parse(await file.text())); }
-            catch { alert("That file doesn't look like a valid FlockForge backup."); }
-            e.target.value = "";
-          }}
-        />
       </div>
-
-      {pendingImport && (
-        <ConfirmDialog
-          title="Restore this backup?"
-          message="This replaces all current FlockForge data with the contents of this file. This cannot be undone."
-          confirmLabel="Restore"
-          onConfirm={() => { onImport(pendingImport); setPendingImport(null); }}
-          onCancel={() => setPendingImport(null)}
-        />
-      )}
 
       <ThemePanel theme={theme} onThemeChange={onThemeChange} />
       {quickLogOpen && (
@@ -981,6 +959,22 @@ function FlockTab({ chickens, setChickens, healthRecords, jumpToChickenId, onJum
   const toggleLaying = (id) => {
     setChickens((cs) => cs.map((c) => (c.id === id ? { ...c, laying: !c.laying } : c)));
     setDetail((d) => (d && d.id === id ? { ...d, laying: !d.laying } : d));
+  };
+  const addTimelinePhoto = (id, photoUrl) => {
+    setChickens((cs) => cs.map((c) => (c.id === id
+      ? { ...c, photoHistory: [...(c.photoHistory || []), { date: todayStr(), photo: photoUrl }] }
+      : c)));
+    setDetail((d) => (d && d.id === id
+      ? { ...d, photoHistory: [...(d.photoHistory || []), { date: todayStr(), photo: photoUrl }] }
+      : d));
+  };
+  const removeTimelinePhoto = (id, index) => {
+    setChickens((cs) => cs.map((c) => (c.id === id
+      ? { ...c, photoHistory: (c.photoHistory || []).filter((_, i) => i !== index) }
+      : c)));
+    setDetail((d) => (d && d.id === id
+      ? { ...d, photoHistory: (d.photoHistory || []).filter((_, i) => i !== index) }
+      : d));
   };
 
   const activeChickens = useMemo(() => chickens.filter((c) => c.status !== "deceased" && c.status !== "sold"), [chickens]);
@@ -1074,7 +1068,7 @@ function FlockTab({ chickens, setChickens, healthRecords, jumpToChickenId, onJum
 
       {detail && (
         <Modal title={detail.name || "Bird detail"} accent={accent} onClose={() => setDetail(null)} wide>
-          <ChickenDetail chicken={detail} chickens={chickens} healthRecords={healthRecords} onEdit={() => { setModal({ data: detail }); setDetail(null); }} onDelete={() => setConfirmDelete(detail.id)} onToggleLaying={() => toggleLaying(detail.id)} />
+          <ChickenDetail chicken={detail} chickens={chickens} healthRecords={healthRecords} onEdit={() => { setModal({ data: detail }); setDetail(null); }} onDelete={() => setConfirmDelete(detail.id)} onToggleLaying={() => toggleLaying(detail.id)} onAddTimelinePhoto={(url) => addTimelinePhoto(detail.id, url)} onRemoveTimelinePhoto={(idx) => removeTimelinePhoto(detail.id, idx)} />
         </Modal>
       )}
       {modal && <ChickenForm accent={accent} initial={modal.data} chickens={chickens} onSave={save} onClose={() => setModal(null)} />}
@@ -1095,7 +1089,89 @@ function FlockTab({ chickens, setChickens, healthRecords, jumpToChickenId, onJum
   );
 }
 
-function ChickenDetail({ chicken: c, chickens, healthRecords, onEdit, onDelete, onToggleLaying }) {
+/* Chronological growth photo strip for a bird: starts with the egg it hatched from
+   (if known), then any photos added over time via "Add photo". Read-only entries
+   (the hatch photo) can't be removed; photos you've explicitly added can be. */
+function PhotoTimeline({ chicken: c, onAdd, onRemove }) {
+  const userId = useContext(UserIdContext);
+  const fileRef = useRef(null);
+  const [cropSrc, setCropSrc] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [viewing, setViewing] = useState(null); // { photo, date, removableIndex }
+
+  const entries = [
+    ...(c.hatchedFromPhoto ? [{ photo: c.hatchedFromPhoto, date: c.hatchDate, label: "Hatched", removableIndex: null }] : []),
+    ...(c.photoHistory || []).map((p, i) => ({ photo: p.photo, date: p.date, label: null, removableIndex: i })),
+  ].sort((a, b) => (a.date || "").localeCompare(b.date || ""));
+
+  if (entries.length === 0 && !onAdd) return null;
+
+  const handleFile = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => setCropSrc(reader.result);
+    reader.readAsDataURL(file);
+    e.target.value = "";
+  };
+
+  const applyCrop = async (croppedBase64) => {
+    setCropSrc(null);
+    setBusy(true);
+    try {
+      const url = userId ? await uploadPhotoToStorage(croppedBase64, userId) : croppedBase64;
+      onAdd(url);
+    } catch (e) {
+      console.warn("[FlockForge] Timeline photo upload failed", e);
+      onAdd(croppedBase64); // keep the photo even if the storage upload failed
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="mb-4">
+      <p className="text-xs font-bold uppercase mb-1.5" style={{ color: "var(--teal)" }}>Photo timeline</p>
+      <div className="flex gap-2 overflow-x-auto pb-1">
+        {entries.map((entry, idx) => (
+          <button key={idx} onClick={() => setViewing(entry)} className="flex-shrink-0 w-16 text-center">
+            <img src={entry.photo} className="w-16 h-16 object-cover rounded-xl border" style={{ borderColor: "rgba(11,42,44,0.15)" }} />
+            <p className="text-[10px] mt-0.5 truncate" style={{ color: "var(--slate)" }}>{entry.label || fmtDate(entry.date)}</p>
+          </button>
+        ))}
+        {onAdd && (
+          <button
+            onClick={() => fileRef.current?.click()}
+            disabled={busy}
+            className="flex-shrink-0 w-16 h-16 rounded-xl border-2 border-dashed flex items-center justify-center"
+            style={{ borderColor: "rgba(11,42,44,0.2)" }}
+            title="Add a photo"
+          >
+            {busy ? <Loader2 size={16} className="animate-spin" style={{ color: "var(--teal)" }} /> : <Plus size={18} style={{ color: "var(--slate)" }} />}
+          </button>
+        )}
+      </div>
+      {onAdd && <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={handleFile} />}
+      {cropSrc && (
+        <ImageCropModal src={cropSrc} shape="square" aspect={1} onCancel={() => setCropSrc(null)} onApply={applyCrop} />
+      )}
+      {viewing && (
+        <Modal title={viewing.label || fmtDate(viewing.date)} accent="var(--teal)" onClose={() => setViewing(null)}>
+          <img src={viewing.photo} className="w-full rounded-xl mb-3" />
+          {viewing.removableIndex !== null && onRemove && (
+            <div className="flex justify-end">
+              <Btn accent="var(--danger)" variant="ghost" onClick={() => { onRemove(viewing.removableIndex); setViewing(null); }}>
+                <Trash2 size={14} /> Remove photo
+              </Btn>
+            </div>
+          )}
+        </Modal>
+      )}
+    </div>
+  );
+}
+
+function ChickenDetail({ chicken: c, chickens, healthRecords, onEdit, onDelete, onToggleLaying, onAddTimelinePhoto, onRemoveTimelinePhoto }) {
   const dam = chickens.find((x) => x.id === c.damId);
   const sire = chickens.find((x) => x.id === c.sireId);
   const children = chickens.filter((x) => x.damId === c.id || x.sireId === c.id);
@@ -1134,6 +1210,7 @@ function ChickenDetail({ chicken: c, chickens, healthRecords, onEdit, onDelete, 
           <img src={c.eggPhoto} className="w-20 h-20 object-contain rounded-xl border" style={{ background: "#fff", borderColor: "rgba(11,42,44,0.12)" }} />
         </div>
       )}
+      <PhotoTimeline chicken={c} onAdd={onAddTimelinePhoto} onRemove={onRemoveTimelinePhoto} />
       {c.sex === "hen" && (
         <div className="mb-4 flex items-center gap-3">
           <span className="text-xs font-bold uppercase" style={{ color: "var(--teal)" }}>Laying status</span>
@@ -1334,6 +1411,7 @@ function IncubatorTab({ incubators, setIncubators, chickens, setChickens, breedi
       onDelete={() => setConfirmDelete(inc.id)}
       onAddEggs={() => setEggModal({ incubatorId: inc.id })}
       onRemoveEgg={(eggId, reason) => setIncubators((arr) => arr.map((i) => i.id !== inc.id ? i : { ...i, eggs: i.eggs.map((e) => e.id === eggId ? { ...e, status: "removed", removedDate: todayStr(), removedReason: reason } : e) }))}
+      onRestoreEgg={(eggId) => setIncubators((arr) => arr.map((i) => i.id !== inc.id ? i : { ...i, eggs: i.eggs.map((e) => e.id === eggId ? { ...e, status: "incubating", removedDate: null, removedReason: null } : e) }))}
       onHatchEgg={(eggId) => setIncubators((arr) => arr.map((i) => i.id !== inc.id ? i : { ...i, eggs: i.eggs.map((e) => e.id === eggId ? { ...e, status: "hatched", hatchedDate: todayStr() } : e) }))}
       onAddToFlock={(egg) => setHatchModal({ incubatorId: inc.id, egg })}
       onAddReminders={() => addReminders(inc)}
@@ -1437,7 +1515,7 @@ function CandlingTimeline({ dayNow, days, accent }) {
   );
 }
 
-function IncubatorCard({ inc, accent, breedingPairs, chickens, onEdit, onDelete, onAddEggs, onRemoveEgg, onHatchEgg, onAddToFlock, onAddReminders, onUpdateNotes, onDeleteEgg, onUpdateEgg, onUpdateEggPhoto }) {
+function IncubatorCard({ inc, accent, breedingPairs, chickens, onEdit, onDelete, onAddEggs, onRemoveEgg, onRestoreEgg, onHatchEgg, onAddToFlock, onAddReminders, onUpdateNotes, onDeleteEgg, onUpdateEgg, onUpdateEggPhoto }) {
   const [open, setOpen] = useState(true);
   const [reasonFor, setReasonFor] = useState(null);
   const [noteFor, setNoteFor] = useState(null);
@@ -1609,6 +1687,11 @@ function IncubatorCard({ inc, accent, breedingPairs, chickens, onEdit, onDelete,
                         <Btn accent="#6B7561" variant="ghost" className="!px-2 !py-1 !text-xs" onClick={() => setReasonFor(egg.id)}>Remove</Btn>
                       </div>
                     )}
+                    {egg.status === "removed" && onRestoreEgg && (
+                      <Btn accent="#6B7561" variant="ghost" className="!px-2 !py-1 !text-xs" onClick={() => onRestoreEgg(egg.id)} title="Put this egg back to incubating">
+                        <RotateCcw size={12} /> Undo
+                      </Btn>
+                    )}
                     {egg.status === "hatched" && !egg.addedToFlock && <Btn accent={accent} className="!px-2 !py-1 !text-xs" onClick={() => onAddToFlock(egg)}><Link2 size={12} /> Add to flock</Btn>}
                     {egg.addedToFlock && <Badge bg="var(--teal)">in flock</Badge>}
                   </div>
@@ -1637,6 +1720,7 @@ function IncubatorCard({ inc, accent, breedingPairs, chickens, onEdit, onDelete,
             <div className="flex flex-wrap gap-2 mt-3">
               {egg.status === "incubating" && <Btn accent="var(--teal)" className="!px-3 !py-1.5 !text-xs" onClick={() => { celebrateHatch(egg.id); setGridEgg(null); }}>🐣 Hatched</Btn>}
               {egg.status === "incubating" && <Btn accent="#6B7561" variant="ghost" className="!px-3 !py-1.5 !text-xs" onClick={() => { setReasonFor(egg.id); setGridEgg(null); }}>Remove</Btn>}
+              {egg.status === "removed" && onRestoreEgg && <Btn accent="#6B7561" variant="ghost" className="!px-3 !py-1.5 !text-xs" onClick={() => { onRestoreEgg(egg.id); setGridEgg(null); }}><RotateCcw size={12} /> Undo remove</Btn>}
               {egg.status === "hatched" && !egg.addedToFlock && <Btn accent={accent} className="!px-3 !py-1.5 !text-xs" onClick={() => { onAddToFlock(egg); setGridEgg(null); }}><Link2 size={12} /> Add to flock</Btn>}
               <Btn accent={accent} variant="ghost" className="!px-3 !py-1.5 !text-xs" onClick={() => { setNoteFor(egg.id); setGridEgg(null); }}><StickyNote size={12} /> {egg.notes ? "Edit note" : "Add note"}</Btn>
               <Btn accent={accent} variant="ghost" className="!px-3 !py-1.5 !text-xs" onClick={() => { setPhotoFor(egg.id); setGridEgg(null); }}><Camera size={12} /> Photo</Btn>
@@ -2865,19 +2949,6 @@ function MainApp({ userId, onLogout, onRestore }) {
     URL.revokeObjectURL(url);
   };
 
-  const importData = (data) => {
-    if (data.chickens) setChickens(data.chickens);
-    if (data.incubators) setIncubators(data.incubators);
-    if (data.breedingPairs) setBreedingPairs(data.breedingPairs);
-    if (data.eggLogs) setEggLogs(data.eggLogs);
-    if (data.healthRecords) setHealthRecords(data.healthRecords);
-    if (data.mortalityLog) setMortalityLog(data.mortalityLog);
-    if (data.reminders) setReminders(data.reminders);
-    if (data.feedCosts) setFeedCosts(data.feedCosts);
-    if (data.eggSales) setEggSales(data.eggSales);
-    if (data.birdSales) setBirdSales(data.birdSales);
-  };
-
   return (
     <UserIdContext.Provider value={userId}>
     <div className="min-h-screen" style={{ background: "var(--mist)", fontFamily: "Manrope, sans-serif", color: "var(--ink)" }}>
@@ -2941,7 +3012,7 @@ function MainApp({ userId, onLogout, onRestore }) {
           </div>
 
           <main className="px-4 sm:px-6 pb-12 pt-4">
-            {active === "dashboard" && <DashboardTab chickens={chickens} incubators={incubators} eggLogs={eggLogs} setEggLogs={setEggLogs} reminders={reminders} onNavigate={setActive} onExport={exportData} onImport={importData} onRestore={onRestore} theme={theme} onThemeChange={setTheme} />}
+            {active === "dashboard" && <DashboardTab chickens={chickens} incubators={incubators} eggLogs={eggLogs} setEggLogs={setEggLogs} reminders={reminders} onNavigate={setActive} onExport={exportData} onRestore={onRestore} theme={theme} onThemeChange={setTheme} />}
             {active === "flock" && <FlockTab chickens={chickens} setChickens={setChickens} healthRecords={healthRecords} jumpToChickenId={jumpTarget} onJumpHandled={() => setJumpTarget(null)} />}
             {active === "incubator" && <IncubatorTab incubators={incubators} setIncubators={setIncubators} chickens={chickens} setChickens={setChickens} breedingPairs={breedingPairs} setReminders={setReminders} />}
             {active === "breeding" && <BreedingTab breedingPairs={breedingPairs} setBreedingPairs={setBreedingPairs} chickens={chickens} />}
