@@ -50,7 +50,7 @@ const SPECIES_PRESETS = [
 ];
 
 const MORTALITY_CAUSES = ["Predator", "Illness", "Injury", "Egg-bound", "Old age", "Unknown", "Cull", "Other"];
-const ORIGIN_PRESETS = ["Hatched in my incubator", "Hatched by a broody hen", "Purchased — feed store", "Purchased — breeder", "Purchased — online/mail order", "Gift or trade"];
+const ORIGIN_PRESETS = ["Hatched in my incubator", "Hatched by a broody hen", "Tractor Supply", "Rural King", "Purchased — other feed store", "Purchased — breeder", "Purchased — online/mail order", "Gift or trade"];
 const HEALTH_TYPES = ["Vaccination", "Deworming", "Treatment", "Weight check", "Checkup", "Injury", "Other"];
 const REMOVAL_REASONS = ["Infertile", "Quitter / stopped developing", "Cracked", "Other"];
 
@@ -261,38 +261,62 @@ function ThemePanel({ theme, onThemeChange }) {
 
 /* --------------------------- persistence hook --------------------------- */
 
-function usePersistedArray(key, userId, onReady, onSaveStateChange, onLoadError) {
-  const [data, setData] = useState([]);
-  const loadedRef = useRef(false);
-  const loadSucceededRef = useRef(false);
-  const userIdRef = useRef(userId);
+const PERSISTED_KEYS = ["chickens", "incubators", "breedingPairs", "eggLogs", "healthRecords", "mortalityLog", "reminders", "feedCosts", "eggSales", "birdSales"];
+
+/* Loads ALL of a user's data in a single request instead of one request per
+   data category (10 separate round-trips → 1). This is what used to
+   occasionally trip the "some data failed to load" warning: firing 10
+   simultaneous connections at a small database made it more likely that one,
+   at random, would time out. One request removes that risk. */
+function useBatchLoad(userId, onLoadError) {
+  const [state, setState] = useState({ loaded: false, succeeded: false, values: {} });
 
   useEffect(() => {
-    userIdRef.current = userId;
-    if (!userId) { loadedRef.current = false; loadSucceededRef.current = false; return; }
-    loadedRef.current = false;
-    loadSucceededRef.current = false;
+    if (!userId) { setState({ loaded: false, succeeded: false, values: {} }); return; }
+    let cancelled = false;
     (async () => {
       try {
-        const { data: row, error } = await supabase.from("user_data").select("value").eq("user_id", userId).eq("key", key).maybeSingle();
+        const { data: rows, error } = await supabase.from("user_data").select("key, value").eq("user_id", userId);
         if (error) throw error;
-        setData(row && Array.isArray(row.value) ? row.value : []);
-        loadSucceededRef.current = true; // only mark succeeded on clean load
+        const values = {};
+        for (const k of PERSISTED_KEYS) values[k] = [];
+        for (const row of rows || []) {
+          if (PERSISTED_KEYS.includes(row.key) && Array.isArray(row.value)) values[row.key] = row.value;
+        }
+        if (!cancelled) setState({ loaded: true, succeeded: true, values });
       } catch (e) {
-        console.warn(`[FlockForge] Failed to load "${key}" — keeping empty, will NOT overwrite server data.`, e);
-        setData([]);
-        onLoadError?.(key);
-        // loadSucceededRef stays false → save effect will not fire → server data is safe
+        console.warn("[FlockForge] Failed to load your data — keeping empty, will NOT overwrite server data.", e);
+        if (!cancelled) { setState({ loaded: true, succeeded: false, values: {} }); onLoadError?.(); }
       }
-      loadedRef.current = true;
-      onReady();
     })();
+    return () => { cancelled = true; };
   }, [userId]);
 
+  return state;
+}
+
+/* One field's live state + autosave, seeded from the shared batch-load result.
+   Preserves the original safety guard exactly: this will not save anything
+   back to the server until the batch load has both finished AND succeeded —
+   so a failed load can never silently overwrite good server data with an
+   empty array. Only the LOAD path was consolidated; each field still saves
+   independently, only when its own data actually changes. */
+function usePersistedField(key, userId, initialValue, loaded, succeeded, onSaveStateChange) {
+  const [data, setData] = useState(initialValue);
+  const seededRef = useRef(false);
+  const userIdRef = useRef(userId);
+  userIdRef.current = userId;
+
   useEffect(() => {
-    // Guard: only save if both loaded AND the load actually succeeded.
-    // If the load failed, we must not save [] back and overwrite good server data.
-    if (!loadedRef.current || !loadSucceededRef.current || !userIdRef.current) return;
+    if (loaded && !seededRef.current) {
+      setData(initialValue);
+      seededRef.current = true;
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loaded]);
+
+  useEffect(() => {
+    if (!seededRef.current || !succeeded || !userIdRef.current) return;
     onSaveStateChange?.(true);
     supabase.from("user_data").upsert({ user_id: userIdRef.current, key, value: data, updated_at: new Date().toISOString() })
       .then(() => {})
@@ -300,10 +324,7 @@ function usePersistedArray(key, userId, onReady, onSaveStateChange, onLoadError)
       .finally(() => onSaveStateChange?.(false));
   }, [data]);
 
-  // Allow forcing a save after a failed load (e.g. user adds data despite the error)
-  const forceAllowSave = () => { loadSucceededRef.current = true; };
-
-  return [data, setData, forceAllowSave];
+  return [data, setData];
 }
 
 /* ------------------------------ UI atoms ------------------------------- */
@@ -951,8 +972,16 @@ function FlockTab({ chickens, setChickens, healthRecords, jumpToChickenId, onJum
   }, [chickens, showInactive, filterPen, filterSex, sortBy]);
 
   const save = (data) => {
-    if (data.id) setChickens((cs) => cs.map((c) => (c.id === data.id ? data : c)));
-    else setChickens((cs) => [...cs, { ...data, id: uid(), status: "active" }]);
+    if (data.id) {
+      setChickens((cs) => cs.map((c) => {
+        if (c.id !== data.id) return c;
+        const base = data.photoHistory || c.photoHistory || [];
+        const photoChanged = data.photo && data.photo !== c.photo;
+        return { ...data, photoHistory: photoChanged ? [...base, { date: todayStr(), photo: data.photo }] : base };
+      }));
+    } else {
+      setChickens((cs) => [...cs, { ...data, id: uid(), status: "active", photoHistory: data.photo ? [{ date: todayStr(), photo: data.photo }] : [] }]);
+    }
     setModal(null);
   };
   const remove = (id) => { setChickens((cs) => cs.filter((c) => c.id !== id)); setDetail(null); setConfirmDelete(null); };
@@ -1194,6 +1223,7 @@ function ChickenDetail({ chicken: c, chickens, healthRecords, onEdit, onDelete, 
           <p><span className="font-bold" style={{ color: "var(--teal)" }}>Band #:</span> <span className="font-mono">{c.bandNumber || "—"}</span></p>
           <p><span className="font-bold" style={{ color: "var(--teal)" }}>Pen:</span> {c.pen || "—"}</p>
           <p><span className="font-bold" style={{ color: "var(--teal)" }}>Origin:</span> {c.origin || "—"}</p>
+          {c.eggSource && <p><span className="font-bold" style={{ color: "var(--teal)" }}>Egg source:</span> {c.eggSource}</p>}
           {c.sex === "hen" && <p className="flex items-center gap-1.5"><span className="font-bold" style={{ color: "var(--teal)" }}>Egg color:</span> <EggShape size={11} fill={eggColorHex(c.eggColor)} /> {c.eggColor || "—"}</p>}
           {c.sex === "hen" && <p><span className="font-bold" style={{ color: "var(--teal)" }}>Egg size:</span> {c.eggSize || "—"}</p>}
         </div>
@@ -1252,7 +1282,7 @@ function ChickenDetail({ chicken: c, chickens, healthRecords, onEdit, onDelete, 
 }
 
 function ChickenForm({ accent, initial, chickens, onSave, onClose }) {
-  const [f, setF] = useState({ name: "", hatchDate: "", breed: "", sex: "unknown", bandNumber: "", pen: "", eggColor: "", eggSize: "", photo: null, eggPhoto: null, notes: "", damId: "", sireId: "", status: "active", laying: false, origin: "", ...initial });
+  const [f, setF] = useState({ name: "", hatchDate: "", breed: "", sex: "unknown", bandNumber: "", pen: "", eggColor: "", eggSize: "", photo: null, eggPhoto: null, notes: "", damId: "", sireId: "", status: "active", laying: false, origin: "", eggSource: "", ...initial });
   const [customColor, setCustomColor] = useState(!!f.eggColor && !EGG_COLORS.some((c) => c.name === f.eggColor));
   const [customSize, setCustomSize] = useState(!!f.eggSize && !EGG_SIZES.includes(f.eggSize));
   const pens = useMemo(() => [...new Set(chickens.map((c) => c.pen).filter(Boolean))], [chickens]);
@@ -1304,6 +1334,11 @@ function ChickenForm({ accent, initial, chickens, onSave, onClose }) {
             <TextInput className="mt-2" value={f.origin} onChange={(e) => setF({ ...f, origin: e.target.value })} placeholder="e.g. Tractor Supply" />
           )}
         </Field>
+        {(f.origin === "Hatched in my incubator" || f.origin === "Hatched by a broody hen") && (
+          <Field label="Egg source (optional)" hint="Where the egg itself came from, if not one of your own breeding pairs">
+            <TextInput value={f.eggSource} onChange={(e) => setF({ ...f, eggSource: e.target.value })} placeholder="e.g. Sarah's flock via Facebook" />
+          </Field>
+        )}
         {f.sex === "hen" && (
           <Field label="Egg color">
             <Select
@@ -1455,11 +1490,11 @@ function IncubatorTab({ incubators, setIncubators, chickens, setChickens, breedi
       )}
       {hatchModal && (
         <ChickenForm accent={accent}
-          initial={{ breed: hatchModal.egg.breed, hatchDate: hatchModal.egg.hatchedDate || todayStr(), damId: hatchModal.egg.damId || "", sireId: hatchModal.egg.sireId || "", sex: "unknown", origin: "Hatched in my incubator" }}
+          initial={{ breed: hatchModal.egg.breed, hatchDate: hatchModal.egg.hatchedDate || todayStr(), damId: hatchModal.egg.damId || "", sireId: hatchModal.egg.sireId || "", sex: "unknown", origin: "Hatched in my incubator", eggSource: hatchModal.egg.eggSource || "" }}
           chickens={chickens} onClose={() => setHatchModal(null)}
           onSave={(data) => {
             const newId = uid();
-            setChickens((cs) => [...cs, { ...data, id: newId, status: "active", hatchedFromPhoto: hatchModal.egg.photo || null }]);
+            setChickens((cs) => [...cs, { ...data, id: newId, status: "active", hatchedFromPhoto: hatchModal.egg.photo || null, photoHistory: data.photo ? [{ date: todayStr(), photo: data.photo }] : [] }]);
             setIncubators((arr) => arr.map((i) => i.id !== hatchModal.incubatorId ? i : { ...i, eggs: i.eggs.map((e) => e.id === hatchModal.egg.id ? { ...e, addedToFlock: true, chickId: newId } : e) }));
             setHatchModal(null);
           }} />
@@ -1785,7 +1820,7 @@ function IncubatorCard({ inc, accent, breedingPairs, chickens, onEdit, onDelete,
 }
 
 function EggEditForm({ initial, breedingPairs, chickens, onSave, accent }) {
-  const [f, setF] = useState({ breed: "", setDate: todayStr(), breedingPairId: null, damId: null, sireId: null, ...initial });
+  const [f, setF] = useState({ breed: "", setDate: todayStr(), breedingPairId: null, damId: null, sireId: null, eggSource: "", ...initial });
   return (
     <div>
       <Field label="Linked breeding pair (optional)" hint="Changing this updates parentage for lineage tracking">
@@ -1807,6 +1842,11 @@ function EggEditForm({ initial, breedingPairs, chickens, onSave, accent }) {
       </Field>
       <Field label="Breed"><TextInput value={f.breed} onChange={(e) => setF({ ...f, breed: e.target.value })} placeholder="Olive Egger" /></Field>
       <Field label="Set date"><DateInput value={f.setDate} onChange={(v) => setF({ ...f, setDate: v })} /></Field>
+      {!f.breedingPairId && (
+        <Field label="Egg source (optional)" hint="Where this egg came from — carries over automatically if you add the chick to your flock">
+          <TextInput value={f.eggSource || ""} onChange={(e) => setF({ ...f, eggSource: e.target.value })} placeholder="e.g. Sarah's flock via Facebook" />
+        </Field>
+      )}
       <div className="flex justify-end gap-2 mt-2">
         <Btn accent={accent} onClick={() => onSave(f)}><Check size={15} /> Save changes</Btn>
       </div>
@@ -1864,7 +1904,7 @@ function IncubatorForm({ accent, initial, onSave, onClose }) {
 }
 
 function EggBatchForm({ accent, breedingPairs, chickens, onSave, onClose }) {
-  const [f, setF] = useState({ breedingPairId: "", breed: "", quantity: 1, setDate: todayStr() });
+  const [f, setF] = useState({ breedingPairId: "", breed: "", quantity: 1, setDate: todayStr(), eggSource: "" });
   const pair = breedingPairs.find((p) => p.id === f.breedingPairId);
   return (
     <Modal title="Add eggs to incubator" accent={accent} onClose={onClose}>
@@ -1877,9 +1917,14 @@ function EggBatchForm({ accent, breedingPairs, chickens, onSave, onClose }) {
       <Field label="Breed"><TextInput value={f.breed} onChange={(e) => setF({ ...f, breed: e.target.value })} placeholder="Olive Egger" /></Field>
       <Field label="Quantity"><TextInput type="number" min={1} value={f.quantity} onChange={(e) => setF({ ...f, quantity: +e.target.value })} /></Field>
       <Field label="Set date"><DateInput value={f.setDate} onChange={(v) => setF({ ...f, setDate: v })} /></Field>
+      {!f.breedingPairId && (
+        <Field label="Egg source (optional)" hint="Where these eggs came from, if not one of your own pairs — carries over automatically to any chick you add to your flock from this batch">
+          <TextInput value={f.eggSource} onChange={(e) => setF({ ...f, eggSource: e.target.value })} placeholder="e.g. Sarah's flock via Facebook, hatching egg order from..." />
+        </Field>
+      )}
       <div className="flex justify-end gap-2 mt-2">
         <Btn variant="ghost" accent="rgba(11,42,44,0.5)" onClick={onClose}>Cancel</Btn>
-        <Btn accent={accent} onClick={() => { const eggs = Array.from({ length: Math.max(1, f.quantity) }, () => ({ id: uid(), breed: f.breed, setDate: f.setDate, status: "incubating", breedingPairId: f.breedingPairId || null, damId: pair?.henId || null, sireId: pair?.roosterId || null, addedToFlock: false, notes: "", photo: null })); onSave(eggs); }}>
+        <Btn accent={accent} onClick={() => { const eggs = Array.from({ length: Math.max(1, f.quantity) }, () => ({ id: uid(), breed: f.breed, setDate: f.setDate, status: "incubating", breedingPairId: f.breedingPairId || null, damId: pair?.henId || null, sireId: pair?.roosterId || null, eggSource: f.breedingPairId ? "" : f.eggSource, addedToFlock: false, notes: "", photo: null })); onSave(eggs); }}>
           <Check size={15} /> Add {f.quantity} egg{f.quantity == 1 ? "" : "s"}
         </Btn>
       </div>
@@ -2894,29 +2939,28 @@ function GlobalStyle() {
 
 function MainApp({ userId, onLogout, onRestore }) {
   const [active, setActive] = useState("dashboard");
-  const [ready, setReady] = useState(0);
   const [loadErrors, setLoadErrors] = useState([]);
-  const bump = () => setReady((c) => c + 1);
-  const onLoadError = (key) => setLoadErrors((e) => e.includes(key) ? e : [...e, key]);
+  const onLoadError = () => setLoadErrors((e) => e.includes("your data") ? e : [...e, "your data"]);
   const [theme, setTheme] = useTheme();
 
   const [pendingSaves, setPendingSaves] = useState(0);
   const onSaveStateChange = (saving) => setPendingSaves((n) => Math.max(0, n + (saving ? 1 : -1)));
 
-  const [chickens, setChickens] = usePersistedArray("chickens", userId, bump, onSaveStateChange, onLoadError);
-  const [incubators, setIncubators] = usePersistedArray("incubators", userId, bump, onSaveStateChange, onLoadError);
-  const [breedingPairs, setBreedingPairs] = usePersistedArray("breedingPairs", userId, bump, onSaveStateChange, onLoadError);
-  const [eggLogs, setEggLogs] = usePersistedArray("eggLogs", userId, bump, onSaveStateChange, onLoadError);
-  const [healthRecords, setHealthRecords] = usePersistedArray("healthRecords", userId, bump, onSaveStateChange, onLoadError);
-  const [mortalityLog, setMortalityLog] = usePersistedArray("mortalityLog", userId, bump, onSaveStateChange, onLoadError);
-  const [reminders, setReminders] = usePersistedArray("reminders", userId, bump, onSaveStateChange, onLoadError);
-  const [feedCosts, setFeedCosts] = usePersistedArray("feedCosts", userId, bump, onSaveStateChange, onLoadError);
-  const [eggSales, setEggSales] = usePersistedArray("eggSales", userId, bump, onSaveStateChange, onLoadError);
-  const [birdSales, setBirdSales] = usePersistedArray("birdSales", userId, bump, onSaveStateChange, onLoadError);
+  const batch = useBatchLoad(userId, onLoadError);
+  const [chickens, setChickens] = usePersistedField("chickens", userId, batch.values.chickens || [], batch.loaded, batch.succeeded, onSaveStateChange);
+  const [incubators, setIncubators] = usePersistedField("incubators", userId, batch.values.incubators || [], batch.loaded, batch.succeeded, onSaveStateChange);
+  const [breedingPairs, setBreedingPairs] = usePersistedField("breedingPairs", userId, batch.values.breedingPairs || [], batch.loaded, batch.succeeded, onSaveStateChange);
+  const [eggLogs, setEggLogs] = usePersistedField("eggLogs", userId, batch.values.eggLogs || [], batch.loaded, batch.succeeded, onSaveStateChange);
+  const [healthRecords, setHealthRecords] = usePersistedField("healthRecords", userId, batch.values.healthRecords || [], batch.loaded, batch.succeeded, onSaveStateChange);
+  const [mortalityLog, setMortalityLog] = usePersistedField("mortalityLog", userId, batch.values.mortalityLog || [], batch.loaded, batch.succeeded, onSaveStateChange);
+  const [reminders, setReminders] = usePersistedField("reminders", userId, batch.values.reminders || [], batch.loaded, batch.succeeded, onSaveStateChange);
+  const [feedCosts, setFeedCosts] = usePersistedField("feedCosts", userId, batch.values.feedCosts || [], batch.loaded, batch.succeeded, onSaveStateChange);
+  const [eggSales, setEggSales] = usePersistedField("eggSales", userId, batch.values.eggSales || [], batch.loaded, batch.succeeded, onSaveStateChange);
+  const [birdSales, setBirdSales] = usePersistedField("birdSales", userId, batch.values.birdSales || [], batch.loaded, batch.succeeded, onSaveStateChange);
 
   const [searchOpen, setSearchOpen] = useState(false);
   const [jumpTarget, setJumpTarget] = useState(null);
-  const loading = ready < 10;
+  const loading = !batch.loaded;
 
   const navRef = useRef(null);
   const [navCanScrollLeft, setNavCanScrollLeft] = useState(false);
@@ -2956,7 +3000,7 @@ function MainApp({ userId, onLogout, onRestore }) {
 
       {loadErrors.length > 0 && (
         <div className="mx-4 mt-3 rounded-xl px-4 py-3 text-sm font-semibold" style={{ background: "#FEF2F2", color: "#991B1B", border: "1px solid #FECACA" }}>
-          ⚠️ Some data failed to load from the server ({loadErrors.join(", ")}). Your existing data was NOT overwritten — try refreshing. If this keeps happening, contact support.
+          ⚠️ Your data failed to load from the server. Your existing data was NOT overwritten — try refreshing. If this keeps happening, contact support.
         </div>
       )}
       {loading ? (
