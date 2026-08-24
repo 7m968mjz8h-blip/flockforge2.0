@@ -3085,8 +3085,6 @@ function MainApp({ userId, onLogout, onRestore }) {
 /*                          AUTH / ACCOUNT LAYER                        */
 /* ===================================================================== */
 
-const PERSISTED_KEYS = ["chickens", "incubators", "breedingPairs", "eggLogs", "healthRecords", "mortalityLog", "reminders", "feedCosts", "eggSales", "birdSales"];
-
 function AuthScreen() {
   const [mode, setMode] = useState("signin");
   const [email, setEmail] = useState("");
