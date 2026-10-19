@@ -796,7 +796,7 @@ function DashCard({ icon: Icon, label, value, sub, accent, onClick, cornerAction
 function DashboardTab({ chickens, incubators, eggLogs, setEggLogs, reminders, onNavigate, onExport, onRestore, theme, onThemeChange }) {
   const [quickLogOpen, setQuickLogOpen] = useState(false);
   const pens = useMemo(() => [...new Set(chickens.map((c) => c.pen).filter(Boolean))], [chickens]);
-  const active = chickens.filter((c) => c.status !== "deceased");
+  const active = chickens.filter((c) => c.status !== "deceased" && c.status !== "sold");
   const hens = active.filter((c) => c.sex === "hen").length;
   const roosters = active.filter((c) => c.sex === "rooster").length;
   const unsexed = active.filter((c) => c.sex === "unknown" || !c.sex).length;
@@ -1447,6 +1447,7 @@ function IncubatorTab({ incubators, setIncubators, chickens, setChickens, breedi
       onAddEggs={() => setEggModal({ incubatorId: inc.id })}
       onRemoveEgg={(eggId, reason) => setIncubators((arr) => arr.map((i) => i.id !== inc.id ? i : { ...i, eggs: i.eggs.map((e) => e.id === eggId ? { ...e, status: "removed", removedDate: todayStr(), removedReason: reason } : e) }))}
       onRestoreEgg={(eggId) => setIncubators((arr) => arr.map((i) => i.id !== inc.id ? i : { ...i, eggs: i.eggs.map((e) => e.id === eggId ? { ...e, status: "incubating", removedDate: null, removedReason: null } : e) }))}
+      onUndoHatch={(eggId) => setIncubators((arr) => arr.map((i) => i.id !== inc.id ? i : { ...i, eggs: i.eggs.map((e) => e.id === eggId ? { ...e, status: "incubating", hatchedDate: null } : e) }))}
       onHatchEgg={(eggId) => setIncubators((arr) => arr.map((i) => i.id !== inc.id ? i : { ...i, eggs: i.eggs.map((e) => e.id === eggId ? { ...e, status: "hatched", hatchedDate: todayStr() } : e) }))}
       onAddToFlock={(egg) => setHatchModal({ incubatorId: inc.id, egg })}
       onAddReminders={() => addReminders(inc)}
@@ -1550,7 +1551,7 @@ function CandlingTimeline({ dayNow, days, accent }) {
   );
 }
 
-function IncubatorCard({ inc, accent, breedingPairs, chickens, onEdit, onDelete, onAddEggs, onRemoveEgg, onRestoreEgg, onHatchEgg, onAddToFlock, onAddReminders, onUpdateNotes, onDeleteEgg, onUpdateEgg, onUpdateEggPhoto }) {
+function IncubatorCard({ inc, accent, breedingPairs, chickens, onEdit, onDelete, onAddEggs, onRemoveEgg, onRestoreEgg, onHatchEgg, onUndoHatch, onAddToFlock, onAddReminders, onUpdateNotes, onDeleteEgg, onUpdateEgg, onUpdateEggPhoto }) {
   const [open, setOpen] = useState(true);
   const [reasonFor, setReasonFor] = useState(null);
   const [noteFor, setNoteFor] = useState(null);
@@ -1727,7 +1728,16 @@ function IncubatorCard({ inc, accent, breedingPairs, chickens, onEdit, onDelete,
                         <RotateCcw size={12} /> Undo
                       </Btn>
                     )}
-                    {egg.status === "hatched" && !egg.addedToFlock && <Btn accent={accent} className="!px-2 !py-1 !text-xs" onClick={() => onAddToFlock(egg)}><Link2 size={12} /> Add to flock</Btn>}
+                    {egg.status === "hatched" && !egg.addedToFlock && (
+                      <div className="flex gap-1">
+                        <Btn accent={accent} className="!px-2 !py-1 !text-xs" onClick={() => onAddToFlock(egg)}><Link2 size={12} /> Add to flock</Btn>
+                        {onUndoHatch && (
+                          <Btn accent="#6B7561" variant="ghost" className="!px-2 !py-1 !text-xs" onClick={() => onUndoHatch(egg.id)} title="Wrong egg? Put it back to incubating">
+                            <RotateCcw size={12} /> Undo
+                          </Btn>
+                        )}
+                      </div>
+                    )}
                     {egg.addedToFlock && <Badge bg="var(--teal)">in flock</Badge>}
                   </div>
                 );
@@ -1757,6 +1767,7 @@ function IncubatorCard({ inc, accent, breedingPairs, chickens, onEdit, onDelete,
               {egg.status === "incubating" && <Btn accent="#6B7561" variant="ghost" className="!px-3 !py-1.5 !text-xs" onClick={() => { setReasonFor(egg.id); setGridEgg(null); }}>Remove</Btn>}
               {egg.status === "removed" && onRestoreEgg && <Btn accent="#6B7561" variant="ghost" className="!px-3 !py-1.5 !text-xs" onClick={() => { onRestoreEgg(egg.id); setGridEgg(null); }}><RotateCcw size={12} /> Undo remove</Btn>}
               {egg.status === "hatched" && !egg.addedToFlock && <Btn accent={accent} className="!px-3 !py-1.5 !text-xs" onClick={() => { onAddToFlock(egg); setGridEgg(null); }}><Link2 size={12} /> Add to flock</Btn>}
+              {egg.status === "hatched" && !egg.addedToFlock && onUndoHatch && <Btn accent="#6B7561" variant="ghost" className="!px-3 !py-1.5 !text-xs" onClick={() => { onUndoHatch(egg.id); setGridEgg(null); }}><RotateCcw size={12} /> Undo hatch</Btn>}
               <Btn accent={accent} variant="ghost" className="!px-3 !py-1.5 !text-xs" onClick={() => { setNoteFor(egg.id); setGridEgg(null); }}><StickyNote size={12} /> {egg.notes ? "Edit note" : "Add note"}</Btn>
               <Btn accent={accent} variant="ghost" className="!px-3 !py-1.5 !text-xs" onClick={() => { setPhotoFor(egg.id); setGridEgg(null); }}><Camera size={12} /> Photo</Btn>
               <Btn accent={accent} variant="ghost" className="!px-3 !py-1.5 !text-xs" onClick={() => { setEditEgg(egg); setGridEgg(null); }}><Pencil size={12} /> Edit</Btn>
